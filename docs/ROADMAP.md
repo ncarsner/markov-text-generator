@@ -5,14 +5,25 @@ and where a second-order Markov chain still earns its place in 2026.
 
 ## Corpus policy
 
-Evaluation uses **public-domain sources only**. The two speeches below are works
-of the United States federal government and are uncopyrighted under
+Evaluation uses **public-domain sources only**. Every text below is a work of
+the United States federal government and is uncopyrighted under
 [17 U.S.C. § 105](https://www.law.cornell.edu/uscode/text/17/105):
 
-| File | Source | Words |
-|---|---|---|
-| `speech_day_of_infamy.txt` | F.D. Roosevelt, 8 Dec 1941 | 515 |
-| `speech_we_choose_to_go_to_the_moon.txt` | J.F. Kennedy, Rice University, 12 Sep 1962 | 2,133 |
+| Source | Files | Words |
+|---|---:|---:|
+| F.D. Roosevelt, "Day of Infamy", 8 Dec 1941 | 1 | 515 |
+| J.F. Kennedy, Rice University, 12 Sep 1962 | 1 | 2,133 |
+| Presidential inaugural addresses, 1789–2005 | 54 | 125,797 |
+| **Total** | **56** | **128,445** |
+
+The inaugural addresses come from [Project Gutenberg ebook #925](https://www.gutenberg.org/ebooks/925).
+Gutenberg's own boilerplate is separately licensed, so only the text between the
+`*** START` / `*** END` markers is used, and three further classes of non-speech
+text are stripped:
+
+- `[Transcriber's note: …]` blocks — modern editorial additions, not speech
+- place/date header lines beneath each title
+- one stray Project Gutenberg attribution line in the 1993 Clinton address
 
 `data/` remains untracked (the blanket `*.txt` rule in `.gitignore`), so no
 corpus is redistributed by this repository. That matters more than it first
@@ -24,36 +35,42 @@ Average distinct continuations per state ("branching"), and the share of states
 with exactly one possible next word ("forced" — the chain has no choice and must
 transcribe the source):
 
-| Corpus | Words | Vocab | order 1 | order 2 | order 3 | order 4 |
-|---|---:|---:|---|---|---|---|
-| Day of Infamy | 515 | 279 | 1.67 / 79% | 1.08 / 95% | 1.02 / 99% | 1.01 / 100% |
-| Rice University | 2,133 | 872 | 2.10 / 76% | 1.14 / 92% | 1.02 / 98% | 1.00 / 100% |
-| Both combined | 2,648 | 1,057 | 2.13 / 76% | 1.14 / 92% | 1.02 / 98% | 1.00 / 100% |
+| Corpus | Words | Vocab | order 1 | order 2 | order 3 |
+|---|---:|---:|---|---|---|
+| Two speeches only | 2,648 | 1,057 | 2.13 / 76% | 1.14 / 92% | 1.02 / 98% |
+| **All 56 speeches** | **128,445** | **14,715** | **4.80 / 57%** | **1.59 / 82%** | **1.11 / 94%** |
 
-At the currently hardcoded order 2, **92% of states are forced**. The chain
-branches only at the remaining 8%.
+Enlarging the corpus roughly 48× lifted order-2 branching from 1.14 to 1.59 and
+cut forced states from 92% to 82%. This confirms the prediction below rather
+than merely asserting it: corpus size, not algorithm, was the binding
+constraint.
 
 ### Memorization is the central constraint
 
-Measured on the Rice University speech, 60-word outputs across 200 seeds, as a
-fraction of the output that is one contiguous verbatim lift from the source:
+Measured as the fraction of a 60-word output that is one contiguous verbatim
+lift from the source, over 200 seeds:
 
-- median **40%**
-- **46 / 200** runs are at least half a single verbatim quote
-- **2 / 200** runs are 100% verbatim — pure transcription with nothing generated
+| Corpus | Median | ≥50% verbatim | =100% verbatim |
+|---|---:|---:|---:|
+| Rice University speech alone (2,133 words) | 40% | 46 / 200 | 2 / 200 |
+| Two speeches (2,648 words) | 35% | 42 / 200 | 0 / 200 |
+| **All 56 speeches (128,445 words)** | **16%** | **1 / 200** | **0 / 200** |
 
-This is the governing fact about the tool. At these corpus sizes it is closer to
-a quotation shuffler than a generator. The cause is corpus size, not a code
-defect: an order-2 chain wants 10^5+ words and has 10^3.
+The enlarged corpus removes the worst behavior outright: pure transcription no
+longer occurs, and near-total quotation fell from roughly one run in five to one
+in two hundred.
 
-Two consequences:
+It does not eliminate the constraint. At order 2 the chain is still forced at
+82% of states, and a median 16% of each output — around nine consecutive words —
+is lifted intact. Two consequences survive:
 
-1. **Corpus scale is the highest-leverage input.** Every quality improvement
-   below is secondary to feeding it more text.
-2. **Output inherits the corpus's licence.** Because the model reproduces long
-   spans verbatim, generated text from a copyrighted corpus is a derivative of
-   it in the most literal sense. This is why the corpus stays untracked and why
-   evaluation is restricted to public-domain sources.
+1. **Corpus scale remains the highest-leverage input.** It is now demonstrated,
+   not assumed: every further quality gain is cheaper to buy with more text than
+   with better code.
+2. **Output inherits the corpus's licence.** Because the model still reproduces
+   multi-word spans verbatim, generated text from a copyrighted corpus is a
+   derivative of it in the most literal sense. This is why the corpus stays
+   untracked and why evaluation is restricted to public-domain sources.
 
 ## Standard-library evolution
 
@@ -83,8 +100,8 @@ Small changes that everything else depends on.
   stores a list *with duplicates*, so `random.choice` is already
   frequency-weighted (correct), but a word following a prefix 50 times is stored
   50 times. A `Counter` yields an identical distribution at a fraction of the
-  memory, which is precisely what makes a corpus large enough to fix the
-  memorization problem feasible.
+  memory. At 2,648 words this was theoretical; at 128,445 it is the difference
+  that makes a still-larger corpus practical.
 - **`fileinput` + `nargs="+"`** — multiple input files and stdin for free.
   `cat corpus/*.txt | markov --order 3` makes the tool composable.
 - **Sentence-aware stopping** — output currently ends mid-clause. Stopping on a
@@ -169,6 +186,7 @@ axis that matters there.
 ## Suggested order of work
 
 1. Tier 1 in one pass — `argparse`, `Random(seed)`, UTF-8. Unblocks everything.
+   (Corpus scale, previously first here, is now done: 2.6k → 128k words.)
 2. `--order` and `--stats` together. They are the teaching story, and `--stats`
    makes the effect of `--order` legible.
 3. Fix the two known defects, now that flags exist to control the alternatives.
