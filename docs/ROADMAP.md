@@ -26,7 +26,15 @@ text are stripped:
 - one stray Project Gutenberg attribution line in the 1993 Clinton address
 
 `data/` remains untracked (the blanket `*.txt` rule in `.gitignore`), so no
-corpus is redistributed by this repository. That matters more than it first
+corpus is redistributed by this repository. Rebuild it from upstream with:
+
+```sh
+uv run python scripts/fetch_corpus.py
+```
+
+The script applies exactly the cleaning rules above and reproduces the 54 files
+used for the measurements below byte-for-byte. It only touches files matching
+`speech_inaugural_*`, so the two hand-added speeches are left alone. That matters more than it first
 appears — see [Memorization](#memorization-is-the-central-constraint).
 
 ## Baseline measurements
