@@ -134,11 +134,19 @@ continuation — where the model has no choice at all.
 than learned a pattern, and makes both a poor reference and a poor generator.
 **Check this before trusting any score.**
 
-```
-corpus of 125,797 words:   order 1: branching 6.88, forced 45%
-                           order 2: branching 1.75, forced 78%
-                           order 3: branching 1.14, forced 93%
-```
+Measured on the 56-document public-domain corpus. **Both tokenizers are shown
+because the choice changes every number** — this is the same corpus twice, not a
+disagreement:
+
+| Tokenizer | Tokens | Vocab | order 1 | order 2 | order 3 |
+|---|---:|---:|---|---|---|
+| `plain` (analysis) | 129,158 | 9,077 | 6.88 / 45% | 1.75 / 78% | 1.14 / 93% |
+| `whitespace` (generation) | 128,445 | 14,715 | 4.80 / 57% | 1.59 / 82% | 1.11 / 94% |
+
+`plain` lowercases and drops punctuation, so it has a smaller vocabulary and more
+evidence per state — which is why it always looks less forced than `whitespace`
+on identical text. [ROADMAP.md](docs/ROADMAP.md) reports the `whitespace` row,
+because it is concerned with the generator.
 
 Higher order means more context and better judgment, but more forced states.
 A corpus of a few thousand words is over 90% forced at order 2 and is not usable.
@@ -215,6 +223,12 @@ uv run python markov_cli.py data/input/speech_day_of_infamy.txt 50
 here. `scripts/fetch_corpus.py` rebuilds it from
 [Project Gutenberg ebook #925](https://www.gutenberg.org/ebooks/925) — 54
 presidential inaugural addresses, 1789–2005.
+
+The public-domain corpus is `speech_inaugural_*.txt` plus
+`speech_day_of_infamy.txt` and `speech_we_choose_to_go_to_the_moon.txt`. A
+working copy of `data/input/` may also hold other material, so **glob
+deliberately rather than reaching for `*.txt`** when reproducing published
+figures.
 
 Every text used is a work of the United States federal government and is
 uncopyrighted under

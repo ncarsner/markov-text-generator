@@ -48,6 +48,10 @@ Average distinct continuations per state ("branching"), and the share of states
 with exactly one possible next word ("forced" — the chain has no choice and must
 transcribe the source):
 
+Measured with whitespace tokenization, which is the generator's view of the
+text. The analysis engine lowercases and drops punctuation, which yields
+different figures for the same corpus; see the README's side-by-side table.
+
 | Corpus | Words | Vocab | order 1 | order 2 | order 3 |
 |---|---:|---:|---|---|---|
 | Two speeches only | 2,648 | 1,057 | 2.13 / 76% | 1.14 / 92% | 1.02 / 98% |
