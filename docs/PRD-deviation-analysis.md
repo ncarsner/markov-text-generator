@@ -1,16 +1,18 @@
 # PRD — Language Deviation Analysis
 
 **Status:** proposed · **Branch:** `analysis` · **Depends on:** `uv-tooling`
+**Scope:** v1 is domain-general. Domain-specific handling is deferred; see
+[Later enhancements](#later-enhancements-out-of-scope-for-v1).
 
 ## Summary
 
 The principal application of this tool is **identifying and quantifying language
 that is calculably variant from expected values**. Given a reference corpus that
-establishes what "expected" means for a domain, the tool scores a target
-document and locates the spans that deviate.
+establishes what "expected" means, the tool scores a target document and locates
+the spans that deviate.
 
 Text generation is retained as a **side effect** of the same n-gram table, not as
-the product. A single CLI exposes both.
+the product. A single CLI exposes both, plus corpus diagnostics.
 
 This inverts the emphasis in [ROADMAP.md](ROADMAP.md), which treated generation
 as primary. The data structure was always better suited to analysis: a Markov
@@ -18,30 +20,32 @@ table *is* a model of expectation, and generation is merely sampling from it.
 
 ## Problem
 
-Reviewers of legal and policy text must answer "what in this document is
-unusual?" against a body of precedent too large to hold in mind. Existing options
-are poor:
+Reviewers must answer "what in this document is unusual?" against a body of
+precedent too large to hold in mind. Existing options are poor:
 
 - **Manual review** — does not scale, and misses subtle drift.
 - **Diff tools** — require a specific baseline document; cannot express "unlike
-  this corpus of 500 contracts."
+  this corpus of 500 documents."
 - **LLM review** — capable, but non-deterministic, unauditable, and cannot show
-  *why* a clause was flagged. In regulated review this is often disqualifying.
+  *why* a span was flagged. In regulated review this is often disqualifying.
 
 An n-gram model is weaker than a transformer at language understanding, and that
-is an acceptable trade. Its advantages are the ones this domain actually
+is an acceptable trade. Its advantages are the ones this problem actually
 requires: it is **deterministic, fully explainable, auditable, offline, and free
 of vendor dependency**. Every flag traces to a specific count in a specific
 reference document.
 
 ## Users and use cases
 
+v1 is domain-general: it operates on any plain-text corpus. The motivating target
+domains below are what the tool is built *toward*; none require v1 to understand
+them, and domain-specific handling is deferred.
+
 | User | Question | Reference corpus |
 |---|---|---|
-| Legislative analyst | Does this amendment introduce language unlike existing code? | Current statute / prior sessions |
-| Contract reviewer | Which clauses deviate from our standard template? | Executed agreements of the same type |
-| Policy owner | Has our policy language drifted across revisions? | Prior policy versions |
-| Compliance | Does this filing read unlike peer filings? | Peer/industry filings |
+| Analyst | Does this document introduce language unlike the existing body? | Prior documents of the same kind |
+| Reviewer | Which passages deviate from our standard? | Accepted exemplars |
+| Owner | Has our language drifted across revisions? | Prior versions |
 | Records analyst | Which corpus does this document most resemble? | Several candidate corpora |
 
 The last row is attribution: the reference that scores a document *lowest* is the
@@ -85,8 +89,8 @@ speech against the inaugural model produced a ~4× spread:
 ```
 
 The high-surprisal spans are precisely the novel technical content; the low ones
-are political boilerplate. **Document scores are a summary statistic; ranked
-spans are the deliverable.**
+are boilerplate. **Document scores are a summary statistic; ranked spans are the
+deliverable.**
 
 ## Goals
 
@@ -99,9 +103,10 @@ spans are the deliverable.**
 
 ## Non-goals
 
+- **Not domain-aware.** v1 treats all text as plain prose. It has no concept of
+  citations, defined terms, clauses, or document structure.
 - **Not legal advice.** The tool measures statistical deviation from a corpus. It
-  does not assess legal significance, risk, enforceability, or compliance. A
-  flagged span may be unremarkable; an unflagged one may be critical.
+  does not assess legal significance, risk, enforceability, or compliance.
 - Not a semantic or entailment model. It does not know what words mean.
 - Not a diff tool for two specific documents.
 - No ML frameworks, no network calls at analysis time, no telemetry.
@@ -109,7 +114,8 @@ spans are the deliverable.**
 
 ## Product surface
 
-One CLI, three subcommands. `analyze` is primary; `generate` is the by-product.
+One CLI, three subcommands. `analyze` is primary; `generate` is the by-product;
+`stats` reports whether a reference corpus is large enough to trust.
 
 ```
 markov analyze  TARGET... --reference DIR [--order N] [--baseline loo|holdout]
@@ -118,22 +124,19 @@ markov generate           --reference DIR [--order N] [--words N] [--sentences N
 markov stats              --reference DIR [--order N]
 ```
 
-`stats` reports corpus diagnostics — vocabulary, branching factor, forced-state
-share — which determine whether a reference corpus is large enough to trust.
-
 ### Example output
 
 ```
-document: proposed_amendment_14.txt          (2,118 tokens)
+document: speech_we_choose_to_go_to_the_moon.txt        (2,133 tokens)
+reference: data/input/speech_inaugural_*.txt            (54 docs, 125,797 tokens)
 
-  surprisal        11.42 bits/token
+  surprisal        10.36 bits/token
   expected          9.01 +/- 0.47            leave-one-out, 54 reference docs
-  deviation         z = +5.13                HIGHLY VARIANT
-  novel trigrams      41%                    expected 22% +/- 4%
+  deviation         z = +2.85                VARIANT
 
   most variant spans (12-token window):
-    17.4  §3(b) ll.42-44   "...notwithstanding any provision to the contrary in subchapter..."
-    16.1  §7(a) ll.98-101  "...algorithmic determination of eligibility shall be subject to..."
+    17.1  ll.61-63   "...atmosphere at speeds of over 25,000 miles per hour, causing heat..."
+    16.4  ll.78-80   "...Atlas which launched John Glenn, generating power equivalent to 10,000 automobiles..."
 ```
 
 ## Functional requirements
@@ -176,14 +179,9 @@ surface for review pipelines.
 - **Engine** — `markov_core.py` holds counting, backoff scoring, and sampling.
   `markov_cli.py` becomes the subcommand dispatcher. `generate_text()` is
   preserved as a thin wrapper so the existing 57 tests continue to pass unchanged.
-- **Tokenization** is the highest-risk design decision for legal text, and needs
-  domain handling that the current `str.split()` does not provide:
-  - Citations (`17 U.S.C. § 105`) will otherwise register as permanent
-    high-surprisal noise; normalize to a placeholder token.
-  - Defined terms (`"Confidential Information"`) are multiword and
-    case-significant; naive lowercasing destroys the signal that they are defined.
-  - Section numbers and enumerations should be structural, not lexical.
-  - Decision: pluggable tokenizer, with a `legal` profile alongside `plain`.
+- **Tokenization** — v1 ships one plain-prose tokenizer. It is defined behind a
+  **pluggable interface** so domain profiles can be added later without touching
+  the engine; that seam is the only concession v1 makes to future domain work.
 - **Determinism** — analysis is fully deterministic. Only `generate` draws
   randomness, and `--seed` makes that reproducible too.
 - **Performance** — target corpora are 10⁵–10⁷ tokens. Use `Counter` rather than
@@ -199,15 +197,13 @@ surface for review pipelines.
 | M4 | Span localization and ranking | Reproduces the prototype's span ranking |
 | M5 | Explanation trace (F7) + JSON output | Every flag traceable to a reference count |
 | M6 | `generate` folded into the CLI | `markov.py` keeps zero-arg behavior |
-| M7 | Legal tokenizer profile | Citations no longer dominate span rankings |
 
 ## Acceptance criteria
 
 - **A1** On a held-out reference document, `|z| < 2.5` for at least 90% of the
   corpus.
 - **A2** An out-of-domain document of the same era and register scores `z > +2.5`.
-- **A3** Span ranking places novel technical content above boilerplate, as in the
-  prototype.
+- **A3** Span ranking places novel content above boilerplate, as in the prototype.
 - **A4** Every flagged span reports the reference count behind it.
 - **A5** Analysis output is byte-identical across runs on identical input.
 - **A6** No third-party runtime dependency; no network access during analysis.
@@ -218,22 +214,49 @@ surface for review pipelines.
 | Risk | Mitigation |
 |---|---|
 | **Small reference corpus gives unreliable scores.** Demonstrated: at 2,648 words the model was 92% forced and near-useless. | `stats` gates analysis; warn below a token threshold. |
-| **Misread as legal judgment.** A statistical outlier is not a legal problem. | Non-goals stated in output header, not only in docs. |
+| **Misread as judgment rather than measurement.** A statistical outlier is not necessarily a problem. | Non-goals stated in output header, not only in docs. |
 | **Reference corpus encodes its own bias.** "Expected" means "typical of what you supplied." | Report corpus composition alongside every score. |
-| **Tokenization artifacts dominate.** Citations and numbers are inherently novel. | Legal tokenizer profile (M7); normalize before scoring. |
-| **n-gram ceiling.** Cannot detect semantic deviation with familiar wording. | Stated plainly; the trade is auditability for capability. |
+| **Tokenization artifacts.** Numbers and rare proper nouns are inherently novel and may crowd span rankings. | Accepted in v1; measure the effect and use it to specify domain profiles. |
+| **n-gram ceiling.** Cannot detect semantic deviation expressed in familiar wording. | Stated plainly; the trade is auditability for capability. |
 | **Genre confound.** A document may score variant for register rather than substance. | Attribution mode (F8) helps distinguish. |
+
+## Later enhancements (out of scope for v1)
+
+Deferred deliberately so v1 can be validated end-to-end on a general corpus
+first. Each would be specified in its own PRD.
+
+### Domain profile: legal and policy text
+
+The motivating domain — legislation, contracts, policy language — but it needs
+handling v1 does not provide, and specifying it now would block validation of the
+core engine:
+
+- **Citation normalization.** Strings like `17 U.S.C. § 105` are inherently novel
+  and would otherwise dominate every span ranking as permanent noise.
+- **Defined terms.** `"Confidential Information"` is multiword and
+  case-significant; a plain lowercasing tokenizer destroys the signal that a term
+  is defined rather than incidental.
+- **Structural segmentation.** Sections, subsections, and enumerations are
+  structure, not vocabulary, and should segment spans rather than appear in them.
+- **Clause-aligned spans.** Fixed windows cut across clause boundaries; legal
+  review wants the clause as the unit.
+- **Corpus acquisition.** Candidates are US Code, the Federal Register, and SEC
+  EDGAR filings — all public record.
+
+The pluggable tokenizer seam in v1 is what makes this additive rather than a
+rewrite.
+
+### Other deferred work
+
+- **Kneser-Ney smoothing** — the quality ceiling above stupid backoff.
+- **Percentile scoring** instead of z, which is more robust to non-normality.
+- **Drift over time** — scoring a document series against a rolling reference.
 
 ## Open questions
 
 1. **Repository name.** `markov-text-generator` describes the by-product, not the
    principal application. Rename?
-2. **Corpus acquisition for legal text.** The current corpus is presidential
-   speeches — a good testbed, wrong domain. Candidates: US Code, Federal
-   Register, SEC EDGAR filings. All public domain or public record.
-3. **Is z the right scale**, or should output be a percentile against the
-   reference distribution, which is more robust to non-normality?
-4. **Sentence- or clause-level segmentation** instead of fixed windows, so spans
-   align with legal structure?
-5. **Does `markov.py` remain** as the zero-argument demo front door once `markov
+2. **Is z the right scale for v1**, or should output be a percentile against the
+   reference distribution?
+3. **Does `markov.py` remain** as the zero-argument demo front door once `markov
    generate` exists?
