@@ -212,3 +212,6 @@ output/
 
 .DS_Store
 *.txt
+
+# Dependency manifest must survive the blanket *.txt rule above
+!requirements-dev.txt

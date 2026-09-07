@@ -32,14 +32,16 @@ def generate_text(input_text, num_words=None):
     return " ".join(output)
 
 
-def main():
-    # Check for command-line arguments
-    if len(sys.argv) < 3:
+def main(argv=None):
+    # Check for command-line arguments (argv is injectable for testing)
+    args = sys.argv[1:] if argv is None else list(argv)
+
+    if len(args) < 2:
         print("Usage: python markov_cli.py <input_file> <num_words or 0> [output_file]")
         sys.exit(1)
 
-    input_file = sys.argv[1]
-    num_words = int(sys.argv[2])
+    input_file = args[0]
+    num_words = int(args[1])
 
     # Read input text from source file
     with open(input_file, "r") as f:
@@ -56,8 +58,8 @@ def main():
     print(textwrap.fill(generated_text))
 
     # Export to output file if specified
-    if len(sys.argv) >= 4:
-        output_file = sys.argv[3]
+    if len(args) >= 3:
+        output_file = args[2]
         with open(output_file, "w") as f:
             f.write(generated_text)
 
