@@ -3,6 +3,11 @@
 An assessment of where `markov_cli.py` can go using only the standard library,
 and where a second-order Markov chain still earns its place in 2026.
 
+> **Superseded in emphasis.** This document treats generation as the primary
+> application. The principal application is language deviation analysis; see
+> [PRD-deviation-analysis.md](PRD-deviation-analysis.md). The standard-library
+> work below remains valid and feeds directly into that effort.
+
 ## Corpus policy
 
 Evaluation uses **public-domain sources only**. Every text below is a work of
@@ -169,12 +174,14 @@ data; unlike an LLM it is instant, free, and reproducible in CI.
 Structurally plausible but novel inputs for a parser or validator. Markov output
 resembles real data while being new, which is what a seed corpus needs.
 
-### Text analysis — the model run backwards
+### Text analysis — the model run backwards (now the principal application)
 
 The same n-gram table answers "how predictable is this document?" Branching
 factor and perplexity are real signals for readability scoring, authorship
 comparison, and boilerplate detection. Arguably a better fit for the data
-structure than generation is.
+structure than generation is — and on that basis this has been promoted from one
+use case among six to the tool's stated purpose. See
+[PRD-deviation-analysis.md](PRD-deviation-analysis.md).
 
 ### Generative art
 
