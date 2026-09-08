@@ -35,7 +35,8 @@ subcommand at a time.
 |---|---|
 | `markov_core.py` — counts, backoff scoring, sampling | **working** |
 | `markov_cli.py stats` — corpus diagnostics | **working** |
-| `markov_cli.py analyze` — document + span scoring | planned |
+| `markov_cli.py analyze` — document scoring | **working** |
+| `markov_cli.py analyze` — span localization | planned |
 | `markov_cli.py generate` — text generation | planned |
 | `markov.py` — the original generation script | **working** |
 
@@ -82,13 +83,29 @@ around 516 options. Lower means more predictable, more formulaic text.
 **In plain terms.** What counts as "normal" for *your* corpus. This is the number
 that makes deviation calculable rather than merely observed.
 
-**Precisely.** Each reference document is scored against a model built from all
-the *others* (leave-one-out). The mean and standard deviation of those scores
-become the expected range.
+**How it is built.** A score of 10.36 bits means nothing on its own — there is no
+universal scale. So the corpus is asked what it expects of its own members:
 
-**How to read it.** Our corpus expects **9.01 ± 0.47 bits per token**. That range
-is a property of that corpus alone. A different corpus has a different range, and
-scores are never comparable across corpora.
+> Take reference document #1 out. Build the model from the other 53. Score
+> document #1 against it. Put it back, take out #2, and repeat — 54 times, so
+> every document gets scored by a model that never saw it.
+
+Those 54 scores are what "normal" means for this corpus. Their average is 9.01
+and they spread about 0.47 either side, so the corpus expects **9.01 ± 0.47 bits
+per token**. Statistics calls this *leave-one-out*; the tool prints the procedure
+rather than the term.
+
+The reason a document is held out is that a model which has already read it would
+recognize its exact wording and call it unsurprising. It would be grading its own
+homework. The same rule applies when you score a document that is part of your
+reference corpus: the tool notices, drops it from the model, and says so.
+
+`--baseline holdout` does the cheap version — hold out every fifth document once,
+build one model instead of 54. On the inaugural corpus that is 0.2 seconds against
+5, at the cost of a coarser estimate from fewer scores.
+
+**How to read it.** That range is a property of that corpus alone. A different
+corpus has a different range, and scores are never comparable across corpora.
 
 ---
 
@@ -109,6 +126,22 @@ standard deviations.
 
 Negative is not "good" — it means *more formulaic than typical*, which can be its
 own signal (heavy boilerplate, copied language).
+
+---
+
+### The ranking
+
+**In plain terms.** The same finding without any statistics: how many reference
+documents this one out-scores.
+
+> `reads as more unusual than 54 of the 54 reference documents`
+
+**How to read it.** This is the line to quote to someone who does not want a
+z score, but it is blunter than it looks. Harding's inaugural reads as more
+unusual than 52 of 54 and is still ordinary at z = +1.87, and once a document
+passes every reference document the count stops distinguishing — the moon speech
+and the Day of Infamy speech both sit at 54 of 54, while z still separates them
+(+2.85 and +2.79). Lead with the count, decide on the z.
 
 ---
 
@@ -182,6 +215,13 @@ Scores also depend on the corpus you chose. "Expected" only ever means "typical
 of what you supplied," so a biased or unrepresentative reference produces
 confident, meaningless numbers.
 
+It also says nothing about **who or what wrote a document**. A passage that
+deviates from an author's previous work deviates for some reason, and a different
+author is only one of them — a new subject, a new format, an editor, a co-writer,
+a decade's gap, or simply a better day at the desk all move the number the same
+way. The tool measures distance from a corpus. It cannot measure cause, and it
+cannot attribute authorship.
+
 ## Quick start
 
 Requires [uv](https://docs.astral.sh/uv/).
@@ -189,7 +229,7 @@ Requires [uv](https://docs.astral.sh/uv/).
 ```sh
 uv sync                                    # create the environment
 uv run python scripts/fetch_corpus.py      # download the sample corpus
-uv run pytest                              # 145 tests
+uv run pytest                              # 183 tests
 ```
 
 Check whether a reference corpus is big enough to score against:
@@ -218,6 +258,35 @@ too sparse to trust. **Check this before believing any score below.**
 
 Score a document against a reference corpus:
 
+```sh
+uv run python markov_cli.py analyze \
+    data/input/speech_we_choose_to_go_to_the_moon.txt \
+    --reference 'data/input/speech_inaugural_*.txt'
+```
+
+```
+reference:  data/input/speech_inaugural_*.txt
+            54 documents, 126,488 tokens, plain tokenizer, order 3
+expected:   9.01 +/- 0.47 bits/token, 79% +/- 4% novel 3-grams
+            measured by scoring each of the 54 reference documents against the other 53
+
+document:   data/input/speech_we_choose_to_go_to_the_moon.txt  (2,152 tokens)
+  surprisal         10.36  bits/token
+  deviation         +2.85  z            VARIANT
+  novel 3-grams       86%               +1.58 z
+  reads as more unusual than 54 of the 54 reference documents
+
+  variant means unlike this reference corpus. It does not mean wrong,
+  poorly written, risky, or non-compliant, and "expected" only ever
+  means typical of the corpus you supplied.
+```
+
+A speech about spaceflight is not an inaugural address, and the numbers say so.
+Pass several documents to score them all against one reference, `--baseline
+holdout` to trade precision for speed, and `--report json` for a pipeline.
+
+The same measurement through the engine directly:
+
 ```python
 import glob
 import markov_core as mc
@@ -233,8 +302,6 @@ print(f"{model.bits_per_token(target):.2f} bits/token")   # 10.36
 print(f"{model.novel_ngram_rate(target):.0%} novel")      # 86%
 ```
 
-Against the expected range of 9.01 ± 0.47, that is z = +2.85 — variant, as you
-would hope, since a speech about spaceflight is not an inaugural address.
 
 Generate text (the original script, until `markov_cli.py generate` lands):
 
