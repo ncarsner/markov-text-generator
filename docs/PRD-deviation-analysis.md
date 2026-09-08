@@ -191,12 +191,12 @@ surface for review pipelines.
 
 | # | Deliverable | Exit criterion |
 |---|---|---|
-| M1 | `markov_core.py`: counts, backoff, sampling | Existing 57 tests pass unchanged |
-| M2 | `stats` subcommand | Reproduces the ROADMAP branching table |
+| M1 | `markov_core.py`: counts, backoff, sampling — **done** | Existing 57 tests pass unchanged |
+| M2 | `stats` subcommand — **done** | Reproduces the ROADMAP branching table |
 | M3 | `analyze`: document scoring + calibration | Reproduces the 9.01 ± 0.47 baseline |
 | M4 | Span localization and ranking | Reproduces the prototype's span ranking |
 | M5 | Explanation trace (F7) + JSON output | Every flag traceable to a reference count |
-| M6 | `generate` folded into the CLI | `markov.py` keeps zero-arg behavior |
+| M6 | `generate` folded into the CLI | `markov.py` keeps zero-arg behavior; `--output` restores the file export dropped with the positional interface at M2 |
 
 ## Acceptance criteria
 

@@ -51,6 +51,7 @@ transcribe the source):
 Measured with whitespace tokenization, which is the generator's view of the
 text. The analysis engine lowercases and drops punctuation, which yields
 different figures for the same corpus; see the README's side-by-side table.
+Reproduce this row with `markov_cli.py stats --tokenizer whitespace`.
 
 | Corpus | Words | Vocab | order 1 | order 2 | order 3 |
 |---|---:|---:|---|---|---|
@@ -97,15 +98,18 @@ No third-party runtime dependency is needed for any of the following.
 
 Small changes that everything else depends on.
 
-- **`argparse`** — the keystone. Replaces positional-only parsing, provides
-  `--help` and type validation, and retires the `0`-means-default sentinel.
-  Every feature below needs a flag to reach it.
+- ~~**`argparse`**~~ — **done** for `markov_cli.py`, which is now a subcommand
+  dispatcher with `--help` and type validation. The positional-only interface
+  and its `0`-means-default sentinel are gone; `markov.py` still carries the
+  original positional form until `generate` lands.
 - **`random.Random(seed)` + `--seed`** — instantiate a generator rather than
   using the global `random` module. Makes runs reproducible and lets the test
   suite drop its autouse global-seeding fixture, which is currently a smell.
-- **`encoding="utf-8"` on both `open()` calls** — a live bug, not a feature.
-  Both calls currently use the locale default encoding, so a corpus containing
-  smart quotes or em-dashes fails on a differently-configured machine.
+- **`encoding="utf-8"` on every `open()` call** — a live bug, not a feature. A
+  corpus containing smart quotes or em-dashes fails on a machine whose locale
+  default is not UTF-8. Fixed in `markov_cli.py`, and pinned by a test that
+  re-runs the CLI under `-X warn_default_encoding`, where an implicit `open()`
+  is an error. `markov.py` still reads with the locale default.
 
 ### Tier 2 — capability
 
@@ -127,9 +131,10 @@ Small changes that everything else depends on.
 
 ### Tier 3 — worthwhile, less urgent
 
-- **`--stats`** — emit the branching/forced table for the user's own corpus.
-  This is what turns the repository from a script into an instrument; see
-  [Teaching](#teaching-strongest-fit).
+- ~~**`--stats`**~~ — **done**, as the `stats` subcommand: it emits the
+  branching/forced table for the user's own corpus, in either tokenizer, as text
+  or JSON. This is what turns the repository from a script into an instrument;
+  see [Teaching](#teaching-strongest-fit).
 - **Model persistence** — build once, generate many. Use `json` with encoded
   tuple keys, **not `pickle`**: unpickling executes arbitrary code, and a saved
   model is exactly the sort of file people pass around.

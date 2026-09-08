@@ -28,19 +28,20 @@ specification and [docs/ROADMAP.md](docs/ROADMAP.md) for engineering notes.
 
 ## Status
 
-Under active development. The engine is built; the CLI that exposes it is not
-finished yet.
+Under active development. The engine is built and the CLI is being filled in one
+subcommand at a time.
 
 | | State |
 |---|---|
 | `markov_core.py` — counts, backoff scoring, sampling | **working** |
-| `markov analyze` — document + span scoring | planned |
-| `markov stats` — corpus diagnostics | planned |
-| `markov generate` — text generation | planned |
-| `markov_cli.py` — the current, older generation script | **working** |
+| `markov_cli.py stats` — corpus diagnostics | **working** |
+| `markov_cli.py analyze` — document + span scoring | planned |
+| `markov_cli.py generate` — text generation | planned |
+| `markov.py` — the original generation script | **working** |
 
 Everything in [Understanding the metrics](#understanding-the-metrics) works today
-through `markov_core`; the examples below are runnable.
+through `markov_core` or `stats`; the examples below are runnable. Until
+`generate` lands, `markov.py` remains the way to generate text.
 
 ## Understanding the metrics
 
@@ -134,9 +135,9 @@ continuation — where the model has no choice at all.
 than learned a pattern, and makes both a poor reference and a poor generator.
 **Check this before trusting any score.**
 
-Measured on the 56-document public-domain corpus. **Both tokenizers are shown
-because the choice changes every number** — this is the same corpus twice, not a
-disagreement:
+`markov_cli.py stats` reports exactly this for your own corpus. Measured on the
+56-document public-domain corpus. **Both tokenizers are shown because the choice
+changes every number** — this is the same corpus twice, not a disagreement:
 
 | Tokenizer | Tokens | Vocab | order 1 | order 2 | order 3 |
 |---|---:|---:|---|---|---|
@@ -188,8 +189,32 @@ Requires [uv](https://docs.astral.sh/uv/).
 ```sh
 uv sync                                    # create the environment
 uv run python scripts/fetch_corpus.py      # download the sample corpus
-uv run pytest                              # 126 tests
+uv run pytest                              # 145 tests
 ```
+
+Check whether a reference corpus is big enough to score against:
+
+```sh
+uv run python markov_cli.py stats \
+    --reference 'data/input/speech_inaugural_*.txt' \
+    --order 2
+```
+
+```
+reference: data/input/speech_inaugural_*.txt
+           54 documents, 126,488 tokens, 8,898 distinct (plain tokenizer)
+
+  order   branching   forced
+      1        6.88     45%
+      2        1.75     78%
+
+  branching: distinct words that can follow a context, averaged
+  forced:    share of contexts with only one continuation
+```
+
+`--tokenizer whitespace` gives the generator's view, `--report json` gives the
+same numbers for a pipeline, and a corpus below roughly 10⁵ tokens is flagged as
+too sparse to trust. **Check this before believing any score below.**
 
 Score a document against a reference corpus:
 
@@ -211,10 +236,10 @@ print(f"{model.novel_ngram_rate(target):.0%} novel")      # 86%
 Against the expected range of 9.01 ± 0.47, that is z = +2.85 — variant, as you
 would hope, since a speech about spaceflight is not an inaugural address.
 
-Generate text (the existing script):
+Generate text (the original script, until `markov_cli.py generate` lands):
 
 ```sh
-uv run python markov_cli.py data/input/speech_day_of_infamy.txt 50
+uv run python markov.py data/input/speech_day_of_infamy.txt 50
 ```
 
 ## The corpus
