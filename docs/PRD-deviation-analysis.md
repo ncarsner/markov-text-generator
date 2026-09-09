@@ -154,7 +154,9 @@ explain in an audit. Kneser-Ney is the quality ceiling and is deferred.
 **F4 — Calibration.** Compute the expected surprisal distribution from the
 reference itself via leave-one-out (default) or a held-out split. All deviation
 scores are reported as z against this distribution — this is what makes variance
-*calculable* rather than merely observed.
+*calculable* rather than merely observed. Reports state the procedure in plain
+words rather than naming the technique, and pair z with a count of reference
+documents out-scored, which needs no statistics to read.
 
 **F5 — Document scoring.** Mean surprisal in bits/token, plus z, plus novel
 n-gram rate against its own expected range.
@@ -193,7 +195,7 @@ surface for review pipelines.
 |---|---|---|
 | M1 | `markov_core.py`: counts, backoff, sampling — **done** | Existing 57 tests pass unchanged |
 | M2 | `stats` subcommand — **done** | Reproduces the ROADMAP branching table |
-| M3 | `analyze`: document scoring + calibration | Reproduces the 9.01 ± 0.47 baseline |
+| M3 | `analyze`: document scoring + calibration — **done** | Reproduces the 9.01 ± 0.47 baseline |
 | M4 | Span localization and ranking | Reproduces the prototype's span ranking |
 | M5 | Explanation trace (F7) + JSON output | Every flag traceable to a reference count |
 | M6 | `generate` folded into the CLI | `markov.py` keeps zero-arg behavior; `--output` restores the file export dropped with the positional interface at M2 |
@@ -256,7 +258,14 @@ rewrite.
 
 1. **Repository name.** `markov-text-generator` describes the by-product, not the
    principal application. Rename?
-2. **Is z the right scale for v1**, or should output be a percentile against the
-   reference distribution?
+2. ~~**Is z the right scale for v1**, or should output be a percentile against
+   the reference distribution?~~ **Resolved at M3: report both.** The text report
+   leads with a plain count — "reads as more unusual than 54 of the 54 reference
+   documents" — which a non-technical reader can act on without knowing what a
+   standard deviation is, and keeps z beside it because the count saturates. Two
+   documents that out-score the whole reference are indistinguishable by count
+   (both 54 of 54) while z still separates them (+2.85 and +2.79), and a document
+   can out-score 52 of 54 and still be ordinary at z = +1.87. The count is the
+   headline; z is the decision. A true percentile is still deferred.
 3. **Does `markov.py` remain** as the zero-argument demo front door once `markov
    generate` exists?
