@@ -36,7 +36,7 @@ subcommand at a time.
 | `markov_core.py` — counts, backoff scoring, sampling | **working** |
 | `markov_cli.py stats` — corpus diagnostics | **working** |
 | `markov_cli.py analyze` — document scoring | **working** |
-| `markov_cli.py analyze` — span localization | planned |
+| `markov_cli.py analyze` — span localization | **working** |
 | `markov_cli.py generate` — text generation | planned |
 | `markov.py` — the original generation script | **working** |
 
@@ -189,18 +189,32 @@ A corpus of a few thousand words is over 90% forced at order 2 and is not usable
 
 ### Reading a span ranking
 
-The actionable output. Each passage is scored on its own, and the extremes are
-what matter:
+The actionable output, and the reason a document score alone is not enough. Each
+passage of `--window` tokens is scored on its own and both extremes are reported,
+with the lines to look at:
 
 ```
- 17.1 bits   ...atmosphere at speeds of over 25,000 miles per hour, causing heat...
- 16.4 bits   ...Atlas which launched John Glenn, generating power equivalent to 10,000 automobiles...
-  ...
-  4.5 bits   ...be done, and it will be done before the end of this...
+  most variant spans (12-token window):
+     17.1  l.97         "...atmosphere at speeds of over 25,000 miles per hour, causing heat..."
+     16.4  ll.60-61     "...Atlas which launched John Glenn, generating power equivalent to 10,000 automobiles..."
+
+  least variant spans:
+      4.5  l.104        "...be done. And it will be done before the end of this..."
+      4.8  ll.68-69     "...the people of the world than those of the Soviet Union. The..."
 ```
 
-The high-surprisal passages are the novel technical content. The low ones are
-boilerplate the corpus has seen many times.
+The high-surprisal passages are the novel technical content; the low ones are
+boilerplate the corpus has seen many times. The spread is about 4×, far wider
+than anything the document score expresses — which is why the moon speech's
+z of +2.85 is a summary and this is the finding.
+
+Passages are quoted **as written**, punctuation and capitals intact, even though
+the model reads them lowercased and stripped: you have to be able to find the
+passage in the document.
+
+Overlapping spans are suppressed. Neighbouring windows share all but one token
+and score almost identically, so without suppression the same passage fills the
+whole list, shifted one token at a time.
 
 ---
 
@@ -229,7 +243,7 @@ Requires [uv](https://docs.astral.sh/uv/).
 ```sh
 uv sync                                    # create the environment
 uv run python scripts/fetch_corpus.py      # download the sample corpus
-uv run pytest                              # 183 tests
+uv run pytest                              # 214 tests
 ```
 
 Check whether a reference corpus is big enough to score against:

@@ -162,7 +162,9 @@ documents out-scored, which needs no statistics to read.
 n-gram rate against its own expected range.
 
 **F6 — Span localization.** Sliding-window mean surprisal, ranked, overlapping
-windows suppressed. Window size configurable; report source line numbers.
+windows suppressed. Window size configurable; report source line numbers. Both
+ends of the ranking are reported: the least variant spans are what a reader
+checks the flagged ones against, and heavy boilerplate is its own signal.
 
 **F7 — Explanation.** For any flagged span, report the backoff level used and the
 reference count that drove the score, so a reviewer can trace the flag.
@@ -196,7 +198,7 @@ surface for review pipelines.
 | M1 | `markov_core.py`: counts, backoff, sampling — **done** | Existing 57 tests pass unchanged |
 | M2 | `stats` subcommand — **done** | Reproduces the ROADMAP branching table |
 | M3 | `analyze`: document scoring + calibration — **done** | Reproduces the 9.01 ± 0.47 baseline |
-| M4 | Span localization and ranking | Reproduces the prototype's span ranking |
+| M4 | Span localization and ranking — **done** | Reproduces the prototype's span ranking |
 | M5 | Explanation trace (F7) + JSON output | Every flag traceable to a reference count |
 | M6 | `generate` folded into the CLI | `markov.py` keeps zero-arg behavior; `--output` restores the file export dropped with the positional interface at M2 |
 
