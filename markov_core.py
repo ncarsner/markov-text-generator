@@ -11,6 +11,7 @@ counts serve the two applications:
 Standard library only, and deterministic apart from ``sample``.
 """
 
+import bisect
 import collections
 import math
 import random
@@ -50,6 +51,50 @@ def plain_tokens(text):
 
 
 TOKENIZERS = {"whitespace": whitespace_tokens, "plain": plain_tokens}
+
+# Each tokenizer paired with a pattern that finds the same tokens in the
+# original text. Span reporting needs to point back at the source -- a line
+# number and the words as written -- and a token list alone has lost that.
+# `plain` matches both cases here and lowercases the result rather than
+# lowercasing the text first, which would not preserve offsets for every
+# character.
+LOCATORS = {
+    "whitespace": (re.compile(r"\S+"), False),
+    "plain": (re.compile(r"[A-Za-z0-9']+"), True),
+}
+
+
+def locate_tokens(text, name):
+    """Tokenize ``text``, returning (token, start, end) for each token.
+
+    Produces exactly the tokens ``TOKENIZERS[name]`` produces, with the offsets
+    into ``text`` that the tokenizer itself discards.
+    """
+    try:
+        pattern, lowercase = LOCATORS[name]
+    except KeyError:
+        raise ValueError(
+            f"unknown tokenizer {name!r}; choose from {sorted(LOCATORS)}"
+        ) from None
+    return [
+        (match.group().lower() if lowercase else match.group(),
+         match.start(), match.end())
+        for match in pattern.finditer(text)
+    ]
+
+
+def line_starts(text):
+    """Offsets at which each line begins, for turning an offset into a line."""
+    starts = [0]
+    for i, char in enumerate(text):
+        if char == "\n":
+            starts.append(i + 1)
+    return starts
+
+
+def line_of(starts, offset):
+    """The 1-based line number containing ``offset``."""
+    return bisect.bisect_right(starts, offset)
 
 
 def get_tokenizer(name):

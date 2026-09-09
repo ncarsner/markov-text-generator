@@ -286,7 +286,9 @@ def deviation(value, expected):
     return (value - expected["mean"]) / expected["stdev"]
 
 
-def analyze_documents(reference, targets, tokenizer_name, order, baseline):
+def analyze_documents(
+    reference, targets, tokenizer_name, order, baseline, window=12, top_spans=5
+):
     """Score each target against the reference, calibrated against the reference.
 
     A target that is itself part of the reference is scored against a model
@@ -304,7 +306,8 @@ def analyze_documents(reference, targets, tokenizer_name, order, baseline):
 
     scored = []
     for path, text in targets:
-        tokens = tokenizer(text)
+        located = markov_core.locate_tokens(text, tokenizer_name)
+        tokens = [token for token, _, _ in located]
         if len(tokens) <= order:
             raise SystemExit(
                 f"{path}: {len(tokens)} tokens is too short to score at order {order}"
@@ -325,7 +328,14 @@ def analyze_documents(reference, targets, tokenizer_name, order, baseline):
         else:
             model = whole
 
-        result = measure(model, tokens)
+        surprisals = model.surprisals(tokens)
+        result = {
+            "bits_per_token": sum(surprisals) / len(surprisals),
+            "novel_ngram_rate": model.novel_ngram_rate(tokens),
+        }
+        # Spans are scored by the same model as the document, so a held-out
+        # target's passages are not judged against a model that has read them.
+        spans = document_spans(text, located, surprisals, window, top_spans)
         scored.append(
             {
                 "path": path,
@@ -345,6 +355,7 @@ def analyze_documents(reference, targets, tokenizer_name, order, baseline):
                 "reference_documents_below": sum(
                     score < result["bits_per_token"] for score in calibration["scores"]
                 ),
+                "spans": spans,
                 "verdict": (
                     "variant"
                     if abs(
@@ -384,6 +395,105 @@ def analyze_documents(reference, targets, tokenizer_name, order, baseline):
         "documents": scored,
         "warnings": warnings,
     }
+
+
+# --- Span localization -----------------------------------------------------
+
+def span_surprisals(scores, window):
+    """Mean surprisal of every ``window``-token span, in token order."""
+    return [
+        sum(scores[i:i + window]) / window
+        for i in range(len(scores) - window + 1)
+    ]
+
+
+def rank_spans(means, window, top):
+    """Indices of the ``top`` highest-scoring spans, without overlaps.
+
+    Neighbouring windows share all but one token and so score almost alike; a
+    raw ranking returns the same passage a dozen times, one token shifted. Take
+    the highest, discard everything it overlaps, repeat.
+    """
+    kept = []
+    for start in sorted(range(len(means)), key=lambda i: (-means[i], i)):
+        if all(abs(start - other) >= window for other in kept):
+            kept.append(start)
+            if len(kept) == top:
+                break
+    return kept
+
+
+def describe_span(text, located, starts, index, window, score):
+    """Turn a span index into something a reviewer can look up and read."""
+    first_offset = located[index][1]
+    last_offset = located[index + window - 1][2]
+    return {
+        "bits_per_token": round(score, 6),
+        "first_token": index,
+        "first_line": markov_core.line_of(starts, first_offset),
+        "last_line": markov_core.line_of(starts, last_offset),
+        # The source as written, not as tokenized: a reviewer needs to
+        # recognize the passage in the document, and the model's view of it has
+        # dropped the punctuation and the capitals.
+        "text": " ".join(text[first_offset:last_offset].split()),
+    }
+
+
+def document_spans(text, located, scores, window, top):
+    """Rank the most and least expected passages of one document.
+
+    ``scores`` is the document's per-token surprisal, already computed for its
+    overall score: the spans are a second reading of the same numbers, not a
+    second pass over the document.
+    """
+    # A document shorter than the window yields no spans on its own:
+    # span_surprisals has nothing to average over.
+    if top < 1:
+        return {"window": window, "most_variant": [], "least_variant": []}
+
+    starts = markov_core.line_starts(text)
+    means = span_surprisals(scores, window)
+
+    def described(indices):
+        return [
+            describe_span(text, located, starts, i, window, means[i])
+            for i in indices
+        ]
+
+    highest = rank_spans(means, window, top)
+    lowest = rank_spans([-mean for mean in means], window, top)
+    return {
+        "window": window,
+        "most_variant": described(highest),
+        "least_variant": described(lowest),
+    }
+
+
+def _span_lines(spans):
+    """Render the ranked passages: the report's actual deliverable.
+
+    A document score says something is unusual; these say where to look.
+    """
+    if not spans["most_variant"]:
+        return []
+
+    lines = ["", f"  most variant spans ({spans['window']}-token window):"]
+    for span in spans["most_variant"]:
+        lines.append(_span_line(span))
+    lines.append("")
+    lines.append("  least variant spans:")
+    for span in spans["least_variant"]:
+        lines.append(_span_line(span))
+    return lines
+
+
+def _span_line(span):
+    location = (
+        f"l.{span['first_line']}"
+        if span["first_line"] == span["last_line"]
+        else f"ll.{span['first_line']}-{span['last_line']}"
+    )
+    return f"    {span['bits_per_token']:5.1f}  {location:<12} \"...{span['text']}...\""
 
 
 def _how_expected_was_measured(calibration):
@@ -467,6 +577,7 @@ def format_analysis(analysis, patterns):
                 "  this document is part of the reference; scored against a "
                 "model built without it"
             )
+        lines.extend(_span_lines(document["spans"]))
 
     lines.append("")
     # The PRD requires this in the output itself, not only in the docs: a
@@ -487,7 +598,13 @@ def cmd_analyze(args):
     reference = read_documents(resolve_reference(args.reference))
     targets = read_documents(resolve_reference(args.target))
     analysis = analyze_documents(
-        reference, targets, args.tokenizer, args.order, args.baseline
+        reference,
+        targets,
+        args.tokenizer,
+        args.order,
+        args.baseline,
+        args.window,
+        args.top_spans,
     )
 
     if args.report == "json":
@@ -505,6 +622,14 @@ def positive_int(value):
     number = int(value)
     if number < 1:
         raise argparse.ArgumentTypeError(f"must be at least 1, not {number}")
+    return number
+
+
+def non_negative_int(value):
+    """An argparse type for counts where zero is a meaningful 'none'."""
+    number = int(value)
+    if number < 0:
+        raise argparse.ArgumentTypeError(f"cannot be negative, got {number}")
     return number
 
 
@@ -548,6 +673,19 @@ def build_parser():
         default="loo",
         help="how to calibrate the expected range: leave-one-out builds a model "
         "per reference document, holdout builds one (default: %(default)s)",
+    )
+    analyze.add_argument(
+        "--window",
+        type=positive_int,
+        default=12,
+        help="span length in tokens (default: %(default)s)",
+    )
+    analyze.add_argument(
+        "--top-spans",
+        type=non_negative_int,
+        default=5,
+        help="spans to report at each end of the ranking, 0 for none "
+        "(default: %(default)s)",
     )
     analyze.add_argument(
         "--tokenizer",
