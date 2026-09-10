@@ -117,17 +117,17 @@ class TestDocumentSpans:
         )
         located = markov_core.locate_tokens(text, "plain")
         tokens = [token for token, _, _ in located]
-        return text, located, model.surprisals(tokens)
+        return model, text, located, model.surprisals(tokens)
 
     def test_reports_both_ends_of_the_ranking(self, scored):
-        text, located, surprisals = scored
-        spans = document_spans(text, located, surprisals, 6, 2)
+        model, text, located, surprisals = scored
+        spans = document_spans(model, text, located, surprisals, 6, 2)
         assert len(spans["most_variant"]) == 2
         assert len(spans["least_variant"]) == 2
 
     def test_the_unlike_passage_outranks_the_familiar_one(self, scored):
-        text, located, surprisals = scored
-        spans = document_spans(text, located, surprisals, 6, 1)
+        model, text, located, surprisals = scored
+        spans = document_spans(model, text, located, surprisals, 6, 1)
 
         # Line 1 repeats the reference's wording; line 2 is unlike it.
         assert spans["most_variant"][0]["first_line"] == 2
@@ -145,26 +145,26 @@ class TestDocumentSpans:
             order=2,
         )
         spans = document_spans(
-            text, located, model.surprisals([t for t, _, _ in located]), 6, 1
+            model, text, located, model.surprisals([t for t, _, _ in located]), 6, 1
         )
         quoted = spans["most_variant"][0]["text"]
         assert quoted in text
         assert quoted[0].isupper() or "," in quoted
 
     def test_spans_report_the_lines_they_came_from(self, scored):
-        text, located, surprisals = scored
-        spans = document_spans(text, located, surprisals, 6, 2)
+        model, text, located, surprisals = scored
+        spans = document_spans(model, text, located, surprisals, 6, 2)
         lines = [s["first_line"] for s in spans["most_variant"]]
         assert all(line >= 1 for line in lines)
         assert 2 in [s["first_line"] for s in spans["most_variant"]]
 
     def test_a_document_shorter_than_the_window_has_no_spans(self, scored):
-        text, located, surprisals = scored
-        assert document_spans(text, located, surprisals, 500, 5)["most_variant"] == []
+        model, text, located, surprisals = scored
+        assert document_spans(model, text, located, surprisals, 500, 5)["most_variant"] == []
 
     def test_zero_spans_requested_reports_none(self, scored):
-        text, located, surprisals = scored
-        assert document_spans(text, located, surprisals, 6, 0)["most_variant"] == []
+        model, text, located, surprisals = scored
+        assert document_spans(model, text, located, surprisals, 6, 0)["most_variant"] == []
 
 
 class TestSpanReport:

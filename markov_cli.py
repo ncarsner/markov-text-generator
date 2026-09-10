@@ -335,7 +335,9 @@ def analyze_documents(
         }
         # Spans are scored by the same model as the document, so a held-out
         # target's passages are not judged against a model that has read them.
-        spans = document_spans(text, located, surprisals, window, top_spans)
+        spans = document_spans(
+            model, text, located, surprisals, window, top_spans
+        )
         scored.append(
             {
                 "path": path,
@@ -423,11 +425,32 @@ def rank_spans(means, window, top):
     return kept
 
 
-def describe_span(text, located, starts, index, window, score):
+def explain_span(model, tokens, scores, index, window):
+    """Per-token evidence for one span, most surprising token first.
+
+    F7: a flag a reviewer cannot check is not auditable. Each entry names the
+    n-gram the model believed and how often it occurs in the reference, so a
+    score can be followed back to the counts that produced it.
+    """
+    order_context = model.order - 1
+    entries = []
+    for position in range(index, index + window):
+        # explain() truncates the context itself, so this slice is about not
+        # copying the whole document prefix per token; it matches how
+        # NgramModel.surprisals walks the same tokens.
+        context = tokens[max(0, position - order_context):position]
+        entry = model.explain(context, tokens[position])
+        entry["bits"] = round(scores[position], 6)
+        entries.append(entry)
+    return sorted(entries, key=lambda entry: -entry["bits"])
+
+
+def describe_span(text, located, starts, index, window, score, explanation):
     """Turn a span index into something a reviewer can look up and read."""
     first_offset = located[index][1]
     last_offset = located[index + window - 1][2]
     return {
+        "explanation": explanation,
         "bits_per_token": round(score, 6),
         "first_token": index,
         "first_line": markov_core.line_of(starts, first_offset),
@@ -439,7 +462,7 @@ def describe_span(text, located, starts, index, window, score):
     }
 
 
-def document_spans(text, located, scores, window, top):
+def document_spans(model, text, located, scores, window, top):
     """Rank the most and least expected passages of one document.
 
     ``scores`` is the document's per-token surprisal, already computed for its
@@ -454,9 +477,19 @@ def document_spans(text, located, scores, window, top):
     starts = markov_core.line_starts(text)
     means = span_surprisals(scores, window)
 
+    tokens = [token for token, _, _ in located]
+
     def described(indices):
         return [
-            describe_span(text, located, starts, i, window, means[i])
+            describe_span(
+                text,
+                located,
+                starts,
+                i,
+                window,
+                means[i],
+                explain_span(model, tokens, scores, i, window),
+            )
             for i in indices
         ]
 
@@ -469,7 +502,7 @@ def document_spans(text, located, scores, window, top):
     }
 
 
-def _span_lines(spans):
+def _span_lines(spans, explain):
     """Render the ranked passages: the report's actual deliverable.
 
     A document score says something is unusual; these say where to look.
@@ -480,11 +513,50 @@ def _span_lines(spans):
     lines = ["", f"  most variant spans ({spans['window']}-token window):"]
     for span in spans["most_variant"]:
         lines.append(_span_line(span))
+        lines.extend(_evidence_lines(span, explain, variant=True))
     lines.append("")
     lines.append("  least variant spans:")
     for span in spans["least_variant"]:
         lines.append(_span_line(span))
+        lines.extend(_evidence_lines(span, explain, variant=False))
     return lines
+
+
+def _evidence_lines(span, explain, variant):
+    """The counts behind a span: the token that decided it, or all of them.
+
+    Every reported span carries its evidence by default, because a flag whose
+    basis is only in the JSON is a flag most readers will never check.
+
+    Which token decided it depends on the end of the ranking. A variant span is
+    driven by its least expected word; a familiar one is held down by its most
+    expected, and quoting that span's worst token would explain the wrong
+    thing.
+    """
+    if not span["explanation"]:
+        return []
+
+    # explanation is sorted most surprising first.
+    entries = span["explanation"] if variant else list(reversed(span["explanation"]))
+    if not explain:
+        label = "driven by" if variant else "anchored by"
+        return [f"           {label} {_evidence(entries[0])}"]
+    return [
+        f"           {entry['bits']:5.1f}  {_evidence(entry)}" for entry in entries
+    ]
+
+
+def _evidence(entry):
+    """State one token's evidence as a fact about the reference corpus."""
+    word = entry["word"]
+    if entry["backoff_level"] < 0:
+        return f'"{word}" never appears in the reference'
+    if entry["backoff_level"] == 0:
+        offered = " ".join(entry["context_offered"])
+        seen = f'"{word}" appears {entry["count"]:,}x'
+        return f'{seen}, but never after "{offered}"' if offered else seen
+    matched = " ".join(entry["context_used"] + [word])
+    return f'"{matched}" appears {entry["count"]:,}x'
 
 
 def _span_line(span):
@@ -521,7 +593,7 @@ def _row(label, number, suffix, note=""):
     return f"{body:<40}{note}".rstrip()
 
 
-def format_analysis(analysis, patterns):
+def format_analysis(analysis, patterns, explain=False):
     """Render an analysis as the human-readable report.
 
     The reference and its expected range are stated once, above the documents
@@ -577,7 +649,7 @@ def format_analysis(analysis, patterns):
                 "  this document is part of the reference; scored against a "
                 "model built without it"
             )
-        lines.extend(_span_lines(document["spans"]))
+        lines.extend(_span_lines(document["spans"], explain))
 
     lines.append("")
     # The PRD requires this in the output itself, not only in the docs: a
@@ -610,7 +682,7 @@ def cmd_analyze(args):
     if args.report == "json":
         print(json.dumps(analysis, indent=2, sort_keys=True))
     else:
-        print(format_analysis(analysis, args.reference))
+        print(format_analysis(analysis, args.reference, args.explain))
 
     return 0
 
@@ -686,6 +758,12 @@ def build_parser():
         default=5,
         help="spans to report at each end of the ranking, 0 for none "
         "(default: %(default)s)",
+    )
+    analyze.add_argument(
+        "--explain",
+        action="store_true",
+        help="show the reference counts behind every token of a reported span, "
+        "not only the strongest one",
     )
     analyze.add_argument(
         "--tokenizer",
