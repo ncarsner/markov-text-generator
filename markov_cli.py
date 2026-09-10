@@ -5,9 +5,10 @@ worth scoring against, which is the question that gates everything else.
 `analyze` is the principal application: it scores how far a document's language
 deviates from that corpus (see docs/PRD-deviation-analysis.md).
 
-`generate` follows at a later milestone. Until it lands, markov.py remains the
-front door for text generation; generate_text() below is the engine behind it
-and keeps its original behavior exactly.
+`generate` walks the same counts forwards instead of scoring against them. It is
+the by-product, not the point, and it is deliberately not the same code path as
+markov.py: that script keeps its original behavior, quirks included, and
+generate_text() below is the engine behind it.
 """
 
 import argparse
@@ -15,8 +16,10 @@ import glob
 import json
 import os
 import random
+import re
 import statistics
 import sys
+import textwrap
 
 import markov_core
 
@@ -687,6 +690,152 @@ def cmd_analyze(args):
     return 0
 
 
+# --- generate --------------------------------------------------------------
+
+# Order 2 for generation, not the analysis default of 3. At 128k words an
+# order-3 chain is forced at 94% of its states (docs/ROADMAP.md), so it mostly
+# transcribes its source. Order 2 is the point where the output is still varied.
+GENERATE_ORDER = 2
+GENERATE_WORDS = 100
+WRAP_COLUMNS = 70
+
+# --sentences needs a stop condition that a corpus might never supply. Cap the
+# walk so a corpus without sentence-ending punctuation ends the run and says so
+# rather than looping until interrupted.
+SENTENCE_TOKEN_LIMIT = 2000
+
+# A sentence ends at .!? even when quotes or brackets close after it. Naive
+# about abbreviations: "Mr." ends a sentence as far as this is concerned.
+_SENTENCE_END = re.compile(r"""[.!?][)\]"'”’]*$""")
+
+
+def ends_sentence(token):
+    """Whether a token closes a sentence."""
+    return bool(_SENTENCE_END.search(token))
+
+
+def opening_context(tokens, chain, order, rng):
+    """Choose where to start the walk, preferring a real sentence opening.
+
+    A capitalized first word is only a proxy for the start of a sentence, and a
+    weak one -- "American" opens no sentence in "...the American sound." Taking
+    contexts that actually follow sentence-ending punctuation in the corpus
+    avoids a leading fragment, which matters most under --sentences, where
+    whole sentences are what was asked for.
+
+    Falls back to the capitalized proxy, and then to any context at all:
+    markov.py raises IndexError on an all-lowercase corpus (a known defect,
+    pinned there as current behavior), but such a corpus is unusual, not
+    unusable.
+    """
+    candidates = [
+        tuple(tokens[i:i + order])
+        for i in range(len(tokens) - order)
+        if i == 0 or ends_sentence(tokens[i - 1])
+    ]
+    if not candidates:
+        candidates = markov_core.capitalized_contexts(chain) or list(chain)
+    if not candidates:
+        raise SystemExit("corpus has no word sequences to generate from")
+    return rng.choice(candidates)
+
+
+def generate_tokens(chain, start, order, rng, words=None, sentences=None):
+    """Walk the chain, returning (tokens, note) where note explains a short run.
+
+    ``words`` counts the whole output, the opening context included, so
+    ``--words 40`` yields forty words rather than forty plus however many the
+    walk was seeded with. A count smaller than the opening context trims it: a
+    prefix of a valid walk is still a valid walk, and the alternative is
+    ``--words 1`` quietly returning two.
+
+    Two stopping conditions, and a third nobody asked for: the corpus can run
+    out. Saying so is what the note is for. markov.py instead loops back to the
+    first word of the corpus, splicing two unrelated passages together and
+    reporting nothing.
+    """
+    start = list(start)
+
+    if sentences is None:
+        # The trim below is what enforces the count; this limit only stops the
+        # walk doing work that would be discarded, and keeps a count smaller
+        # than the opening from reaching the engine as a negative limit.
+        produced = list(
+            markov_core.walk(
+                chain, start, order, rng=rng, limit=max(0, words - len(start))
+            )
+        )
+        out = (start + produced)[:words]
+        note = (
+            None if len(out) >= words
+            else f"the corpus ran out after {len(out):,} words"
+        )
+        return out, note
+
+    found = []
+
+    def stop(token):
+        if ends_sentence(token):
+            found.append(token)
+        return len(found) >= sentences
+
+    produced = list(
+        markov_core.walk(
+            chain, start, order, rng=rng, limit=SENTENCE_TOKEN_LIMIT, stop=stop
+        )
+    )
+    note = None
+    if len(found) < sentences:
+        ran_out = len(produced) < SENTENCE_TOKEN_LIMIT
+        note = (
+            f"stopped after {len(found)} of {sentences} sentences: "
+            + (
+                f"the corpus ran out after {len(start) + len(produced):,} words"
+                if ran_out
+                else f"reached the {SENTENCE_TOKEN_LIMIT:,}-token limit"
+            )
+        )
+    return start + produced, note
+
+
+def cmd_generate(args):
+    documents = read_documents(resolve_reference(args.reference))
+
+    # Whitespace tokenization, always. The plain tokenizer drops the case and
+    # punctuation that generated text has to carry to read like its source.
+    tokens = markov_core.whitespace_tokens(" ".join(text for _, text in documents))
+    if len(tokens) <= args.order:
+        raise SystemExit(
+            f"corpus of {len(tokens):,} tokens is too short to generate at "
+            f"order {args.order}"
+        )
+
+    words = args.words
+    if words is None and args.sentences is None:
+        words = GENERATE_WORDS
+
+    chain = markov_core.build_chain(tokens, args.order)
+    rng = random.Random(args.seed)
+    start = opening_context(tokens, chain, args.order, rng)
+    produced, note = generate_tokens(
+        chain, start, args.order, rng, words, args.sentences
+    )
+    text = textwrap.fill(" ".join(produced), WRAP_COLUMNS)
+
+    if args.output:
+        with open(args.output, "w", encoding="utf-8") as handle:
+            handle.write(text + "\n")
+        # To stderr, so `--output` leaves stdout empty and a pipeline that
+        # expects only generated text on stdout is not fed a status line.
+        print(f"wrote {len(produced):,} words to {args.output}", file=sys.stderr)
+    else:
+        print(text)
+
+    if note:
+        print(f"note: {note}", file=sys.stderr)
+    return 0
+
+
 # --- Dispatch --------------------------------------------------------------
 
 def positive_int(value):
@@ -778,6 +927,53 @@ def build_parser():
         help="output format (default: %(default)s)",
     )
     analyze.set_defaults(func=cmd_analyze)
+
+    generate = subcommands.add_parser(
+        "generate",
+        help="generate imitative text from a corpus",
+        description="Walk the same n-gram counts forwards to produce text in "
+        "the style of a corpus. Always whitespace-tokenized: generated text "
+        "has to carry the case and punctuation that the analysis tokenizer "
+        "drops.",
+    )
+    generate.add_argument(
+        "--reference",
+        nargs="+",
+        required=True,
+        metavar="PATH",
+        help="corpus to generate from: directories, globs, or files",
+    )
+    generate.add_argument(
+        "--order",
+        type=positive_int,
+        default=GENERATE_ORDER,
+        help="chain order (default: %(default)s). Higher orders quote the "
+        "corpus at greater length; see docs/ROADMAP.md",
+    )
+    length = generate.add_mutually_exclusive_group()
+    length.add_argument(
+        "--words",
+        type=positive_int,
+        help=f"how many words to generate (default: {GENERATE_WORDS})",
+    )
+    length.add_argument(
+        "--sentences",
+        type=positive_int,
+        help="generate whole sentences instead of a word count, stopping on "
+        "the punctuation that ends one",
+    )
+    generate.add_argument(
+        "--seed",
+        type=int,
+        help="seed the generator so a run can be reproduced exactly; "
+        "without it, output differs every time",
+    )
+    generate.add_argument(
+        "--output",
+        metavar="PATH",
+        help="write the text to a file instead of stdout",
+    )
+    generate.set_defaults(func=cmd_generate)
 
     stats = subcommands.add_parser(
         "stats",

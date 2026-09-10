@@ -128,6 +128,43 @@ def capitalized_contexts(chain):
     return [context for context in chain if context[0][:1].isupper()]
 
 
+def walk(chain, start, order, rng=random, limit=None, stop=None):
+    """Yield tokens following ``start``, ending when the chain runs out.
+
+    The generator form of ``sample``, and the difference is the ending. A
+    corpus has a last word, and the context that follows it has no recorded
+    continuation; this stops there. ``sample`` raises instead, which is the
+    older contract and is kept because ``markov.py`` depends on it.
+
+    ``limit`` caps how many tokens are produced. ``stop`` is called with each
+    token as it is emitted and ends the walk when it returns true, which is how
+    sentence-aware stopping is expressed without the engine knowing what a
+    sentence is.
+
+    A ``stop`` condition the chain may never satisfy needs a ``limit`` to fall
+    back on, so the two are required together: a cyclic chain and a condition
+    that never fires is an unbounded walk, and failing at the call is better
+    than hanging inside it.
+    """
+    if stop is not None and limit is None:
+        raise ValueError("walk with a stop condition needs a limit to fall back on")
+
+    out = list(start)
+    context = tuple(start)
+    produced = 0
+    while limit is None or produced < limit:
+        choices = chain.get(context)
+        if not choices:
+            return
+        word = rng.choice(choices)
+        yield word
+        produced += 1
+        out.append(word)
+        context = tuple(out[-order:])
+        if stop is not None and stop(word):
+            return
+
+
 def sample(chain, start, count, order, rng=random):
     """Walk the chain from ``start``, returning it followed by ``count`` tokens.
 
@@ -135,10 +172,12 @@ def sample(chain, start, count, order, rng=random):
     continuations.
     """
     out = list(start)
-    context = tuple(start)
-    for _ in range(count):
-        out.append(rng.choice(chain[context]))
-        context = tuple(out[-order:])
+    out.extend(walk(chain, start, order, rng=rng, limit=count))
+    if len(out) - len(start) < count:
+        raise IndexError(
+            f"chain reached a context with no continuations after "
+            f"{len(out) - len(start)} of {count} tokens"
+        )
     return out
 
 
