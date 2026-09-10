@@ -14,6 +14,7 @@ from markov_core import (
     get_tokenizer,
     plain_tokens,
     sample,
+    walk,
     whitespace_tokens,
 )
 
@@ -109,6 +110,71 @@ class TestSample:
     def test_dead_end_raises(self):
         with pytest.raises(IndexError):
             sample(build_chain(CORPUS, 2), ("no", "such"), 1, 2)
+
+
+class TestWalk:
+    def test_yields_only_the_tokens_after_the_start(self):
+        out = list(walk(build_chain(CYCLE, 2), ("Alpha", "beta"), 2, limit=4))
+        assert out == ["gamma", "Alpha", "beta", "gamma"]
+
+    def test_stops_at_the_end_of_the_corpus_instead_of_raising(self):
+        """The difference from sample(). CORPUS ends at 'the rat'."""
+        assert list(walk(build_chain(CORPUS, 2), ("the", "rat"), 2, limit=10)) == []
+
+    def test_a_short_walk_is_not_padded(self):
+        """'ate the rat' ends the corpus, so the walk yields what it can."""
+        out = list(walk(build_chain(CORPUS, 2), ("cat", "ate"), 2, limit=10))
+        assert out == ["the", "rat"]
+
+    def test_no_limit_runs_until_the_chain_stops(self):
+        assert len(list(walk(build_chain(CORPUS, 2), ("cat", "ate"), 2))) == 2
+
+    def test_stop_ends_the_walk_and_keeps_the_token_that_ended_it(self):
+        out = list(
+            walk(
+                build_chain(CYCLE, 2),
+                ("Alpha", "beta"),
+                2,
+                limit=100,
+                stop=lambda word: word == "Alpha",
+            )
+        )
+        assert out == ["gamma", "Alpha"]
+
+    def test_stop_is_checked_after_the_limit_is_reached(self):
+        """limit bounds the walk even when stop never fires."""
+        out = list(
+            walk(
+                build_chain(CYCLE, 2),
+                ("Alpha", "beta"),
+                2,
+                limit=3,
+                stop=lambda word: word == "never",
+            )
+        )
+        assert len(out) == 3
+
+    def test_does_not_grow_the_chain_it_walks(self):
+        """A defaultdict inserts on lookup; walking a dead end must not."""
+        chain = build_chain(CORPUS, 2)
+        before = len(chain)
+        list(walk(chain, ("no", "such"), 2, limit=5))
+        assert len(chain) == before
+
+    def test_a_stop_condition_without_a_limit_is_refused(self):
+        """On CYCLE, a condition that never fires is an unbounded walk. The
+        guard refuses at the call, before any walking, which is why this is
+        checked on the finite CORPUS: without the guard the walk here ends on
+        its own, so a missing guard fails this test instead of hanging it."""
+        with pytest.raises(ValueError, match="limit"):
+            list(walk(build_chain(CORPUS, 2), ("the", "cat"), 2,
+                      stop=lambda word: word == "never"))
+
+    def test_is_reproducible_with_a_seeded_generator(self):
+        chain = build_chain(CYCLE, 2)
+        args = (chain, ("Alpha", "beta"), 2)
+        first = list(walk(*args, rng=random.Random(3), limit=12))
+        assert list(walk(*args, rng=random.Random(3), limit=12)) == first
 
 
 class TestNgramModelCounts:

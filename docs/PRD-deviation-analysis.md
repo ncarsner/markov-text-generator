@@ -120,7 +120,8 @@ One CLI, three subcommands. `analyze` is primary; `generate` is the by-product;
 ```
 markov analyze  TARGET... --reference DIR [--order N] [--baseline loo|holdout]
                           [--window N] [--top-spans N] [--report text|json]
-markov generate           --reference DIR [--order N] [--words N] [--sentences N] [--seed N]
+markov generate           --reference DIR [--order N] [--words N | --sentences N]
+                          [--seed N] [--output PATH]
 markov stats              --reference DIR [--order N]
 ```
 
@@ -176,7 +177,10 @@ JSON.
 rank them by resulting surprisal.
 
 **F9 — Generation.** Retain generation from the same table: order, word or
-sentence count, and optional seed.
+sentence count, and optional seed. Generation is always whitespace-tokenized —
+the analysis tokenizer discards the case and punctuation output must carry — and
+it ends when the corpus does, reporting a short run rather than looping back to
+the corpus's first word as `markov.py` does.
 
 **F10 — Output formats.** Human-readable text and JSON. JSON is the integration
 surface for review pipelines.
@@ -190,7 +194,9 @@ surface for review pipelines.
   **pluggable interface** so domain profiles can be added later without touching
   the engine; that seam is the only concession v1 makes to future domain work.
 - **Determinism** — analysis is fully deterministic. Only `generate` draws
-  randomness, and `--seed` makes that reproducible too.
+  randomness, from its own `random.Random` instance rather than the global
+  module, so `--seed` reproduces a run regardless of what else has seeded
+  `random`.
 - **Performance** — target corpora are 10⁵–10⁷ tokens. Use `Counter` rather than
   duplicate-storing lists (see ROADMAP); scoring is O(tokens × order).
 
@@ -203,7 +209,7 @@ surface for review pipelines.
 | M3 | `analyze`: document scoring + calibration — **done** | Reproduces the 9.01 ± 0.47 baseline |
 | M4 | Span localization and ranking — **done** | Reproduces the prototype's span ranking |
 | M5 | Explanation trace (F7) + JSON output — **done** | Every flag traceable to a reference count |
-| M6 | `generate` folded into the CLI | `markov.py` keeps zero-arg behavior; `--output` restores the file export dropped with the positional interface at M2 |
+| M6 | `generate` folded into the CLI — **done** | `markov.py` keeps zero-arg behavior; `--output` restores the file export dropped with the positional interface at M2 |
 
 ## Acceptance criteria
 
