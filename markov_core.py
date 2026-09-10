@@ -174,6 +174,22 @@ class NgramModel:
         context = tuple(context)
         return context[-(self.order - 1):] if self.order > 1 else ()
 
+    def _match(self, context, word):
+        """Longest context that ``word`` was actually seen following.
+
+        Returns (length used, that context, its count with ``word``), or
+        (-1, (), 0) when the word never appears in the reference at all. This
+        is the single fact behind both the score and its explanation: backing
+        off is choosing which n-gram to believe, and the answer is a specific
+        count in the reference.
+        """
+        for n in range(len(context), -1, -1):
+            prefix = context[len(context) - n:] if n else ()
+            count = self.counts[n + 1].get(prefix + (word,), 0)
+            if count:
+                return n, prefix, count
+        return -1, (), 0
+
     def score(self, context, word):
         """Return (score, backoff_level, count) for ``word`` after ``context``.
 
@@ -182,14 +198,34 @@ class NgramModel:
         carried alongside the score so a flagged span can be explained.
         """
         context = self._truncate(context)
-        for n in range(len(context), -1, -1):
-            prefix = context[len(context) - n:] if n else ()
-            count = self.counts[n + 1].get(prefix + (word,), 0)
-            if count:
-                denominator = self.counts[n][prefix] if n else self.total
-                return (self.alpha ** (len(context) - n)) * count / denominator, n, count
-        floor = (self.alpha ** (len(context) + 1)) / (self.total + self.vocab)
-        return floor, -1, 0
+        level, prefix, count = self._match(context, word)
+        if level < 0:
+            floor = (self.alpha ** (len(context) + 1)) / (self.total + self.vocab)
+            return floor, -1, 0
+        denominator = self.counts[level][prefix] if level else self.total
+        return (
+            (self.alpha ** (len(context) - level)) * count / denominator,
+            level,
+            count,
+        )
+
+    def explain(self, context, word):
+        """Say why ``word`` scored as it did, in terms a reviewer can check.
+
+        Every field is a fact about the reference corpus: which n-gram was
+        believed, how often it occurs, and how often the word occurs at all.
+        This is what makes a flag traceable rather than merely reported.
+        """
+        context = self._truncate(context)
+        level, prefix, count = self._match(context, word)
+        return {
+            "word": word,
+            "backoff_level": level,
+            "context_offered": list(context),
+            "context_used": list(prefix),
+            "count": count,
+            "word_count": self.counts[1].get((word,), 0),
+        }
 
     def probability(self, context, word):
         """The backoff score alone."""

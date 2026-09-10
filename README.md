@@ -218,6 +218,40 @@ whole list, shifted one token at a time.
 
 ---
 
+### Following a flag back to the evidence
+
+Every reported span says which word decided it, and on what basis:
+
+```
+     17.1  l.97   "...atmosphere at speeds of over 25,000 miles per hour, causing heat..."
+           driven by "speeds" never appears in the reference
+      4.5  l.104  "...be done. And it will be done before the end of this..."
+           anchored by "it will be" appears 32x
+```
+
+`--explain` replaces that one line with the whole span, token by token:
+
+```
+      21.0  "speeds" never appears in the reference
+      21.0  "25" never appears in the reference
+      21.0  "per" never appears in the reference
+      19.6  "atmosphere" appears 1x, but never after "reentering the"
+      16.3  "hour" appears 10x, but never after "miles per"
+      14.0  "of over" appears 1x
+       6.9  "of" appears 6,722x, but never after "at speeds"
+```
+
+Every line is a claim you can check with `grep`. "per" really does appear zero
+times in 54 inaugural addresses; "of" appears 6,722 times but never once after
+"at speeds". Nothing is inferred and nothing is approximate — a score is a
+weighted count, and this is the count.
+
+This is the difference between this tool and asking a language model the same
+question. The answer may be less capable, but you can hand it to whoever is
+affected by the flag and they can verify it themselves.
+
+---
+
 ### What these numbers do **not** mean
 
 A high score means **unlike the reference corpus**. It does not mean wrong,
@@ -243,7 +277,7 @@ Requires [uv](https://docs.astral.sh/uv/).
 ```sh
 uv sync                                    # create the environment
 uv run python scripts/fetch_corpus.py      # download the sample corpus
-uv run pytest                              # 214 tests
+uv run pytest                              # 239 tests
 ```
 
 Check whether a reference corpus is big enough to score against:

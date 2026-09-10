@@ -167,7 +167,10 @@ ends of the ranking are reported: the least variant spans are what a reader
 checks the flagged ones against, and heavy boilerplate is its own signal.
 
 **F7 — Explanation.** For any flagged span, report the backoff level used and the
-reference count that drove the score, so a reviewer can trace the flag.
+reference count that drove the score, so a reviewer can trace the flag. Reports
+name the n-gram that was believed rather than the level number: "appears 32x" is
+checkable by someone who has never heard of backoff, and the level is kept in the
+JSON.
 
 **F8 — Attribution mode.** Score one target against several reference corpora and
 rank them by resulting surprisal.
@@ -199,7 +202,7 @@ surface for review pipelines.
 | M2 | `stats` subcommand — **done** | Reproduces the ROADMAP branching table |
 | M3 | `analyze`: document scoring + calibration — **done** | Reproduces the 9.01 ± 0.47 baseline |
 | M4 | Span localization and ranking — **done** | Reproduces the prototype's span ranking |
-| M5 | Explanation trace (F7) + JSON output | Every flag traceable to a reference count |
+| M5 | Explanation trace (F7) + JSON output — **done** | Every flag traceable to a reference count |
 | M6 | `generate` folded into the CLI | `markov.py` keeps zero-arg behavior; `--output` restores the file export dropped with the positional interface at M2 |
 
 ## Acceptance criteria
