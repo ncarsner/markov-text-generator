@@ -1,9 +1,9 @@
 """Tests for the generate subcommand: length, stopping, seeding, and export.
 
-Generation is the by-product of the counts that analysis is built on, but it is
-a separate code path from markov.py, which keeps its original behavior. The
-distinguishing cases are here: the corpus ends rather than looping, an
-all-lowercase corpus works rather than crashing, and a seed reproduces a run.
+Generation is the by-product of the counts that analysis is built on. The cases
+that matter most are the ones the retired markov.py script got wrong: the corpus
+ends rather than looping back to its first word, an all-lowercase corpus works
+rather than crashing, and a seed reproduces a run.
 """
 
 import random
@@ -74,8 +74,8 @@ class TestOpeningContext:
         assert openings == {("The", "cat"), ("The", "dog")}
 
     def test_a_capitalized_word_mid_sentence_is_not_an_opening(self):
-        """The distinction from markov.py's seeding: it would start at
-        ('American', 'sound.') and emit a fragment."""
+        """Seeding on any capitalized word would start at ('American',
+        'sound.') and emit a fragment."""
         text = "we heard the American sound. we heard the American noise."
         tokens, chain = chain_of(text)
         openings = {
@@ -155,8 +155,8 @@ class TestLength:
 
 class TestRunningOutOfCorpus:
     def test_the_walk_ends_rather_than_looping(self):
-        """markov.py splices the end of the corpus onto its beginning; this
-        stops. Nothing after 'the frog.' was ever recorded."""
+        """Nothing after 'the frog.' was ever recorded, so the walk stops there
+        rather than splicing the end of the corpus onto its beginning."""
         tokens, chain = chain_of(PROSE)
         produced, note = generate_tokens(
             chain, ("The", "cat"), 2, random.Random(0), words=500
@@ -190,7 +190,8 @@ class TestChainCorrectness:
             assert pair in pairs
 
     def test_no_empty_tokens_leak_into_the_output(self, prose, capsys):
-        """The sentinel that makes markov.py loop is absent here."""
+        """Empty tokens were how the retired generator marked a loop back to
+        the start of the corpus; none should appear."""
         main(["generate", "--reference", str(prose), "--words", "40", "--seed", "2"])
         assert "" not in capsys.readouterr().out.split(" ")
 
@@ -317,8 +318,7 @@ class TestLowercaseCorpus:
     def test_an_all_lowercase_corpus_generates_rather_than_crashing(
         self, tmp_path, capsys
     ):
-        """markov.py raises IndexError here; see
-        test_generate_text.TestEdgeCases.test_no_capitalized_prefix_raises."""
+        """The retired markov.py raised IndexError here."""
         source = tmp_path / "lower.txt"
         source.write_text("the cat sat on the mat and the cat ate the rat\n")
         assert main([

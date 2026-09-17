@@ -10,8 +10,6 @@ import pytest
 import markov_cli
 from markov_cli import corpus_report, main, resolve_reference
 
-from conftest import CORPUS_LINES
-
 # "      2        1.75     78%" -- a table row, as distinct from the composition
 # line above it, which also begins with a digit.
 TABLE_ROW = re.compile(r"^\s+\d+\s+\d+\.\d\d\s+\d+%$")
@@ -270,10 +268,3 @@ class TestOptionValidation:
             main(["stats", "--reference", str(corpus_dir), "--report", "xml"])
         assert excinfo.value.code == 2
 
-
-class TestGenerateTextSurvives:
-    def test_generation_is_still_available_to_markov_py(self, corpus):
-        """generate_text stays the engine behind markov.py until the generate
-        subcommand lands at M6; test_generate_text.py pins its behavior."""
-        produced = markov_cli.generate_text(corpus, 10).split()
-        assert set(produced) <= set(" ".join(CORPUS_LINES).split())

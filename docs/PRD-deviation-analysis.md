@@ -180,7 +180,7 @@ rank them by resulting surprisal.
 sentence count, and optional seed. Generation is always whitespace-tokenized —
 the analysis tokenizer discards the case and punctuation output must carry — and
 it ends when the corpus does, reporting a short run rather than looping back to
-the corpus's first word as `markov.py` does.
+the corpus's first word as the original `markov.py` did.
 
 **F10 — Output formats.** Human-readable text and JSON. JSON is the integration
 surface for review pipelines.
@@ -188,8 +188,10 @@ surface for review pipelines.
 ## Technical approach
 
 - **Engine** — `markov_core.py` holds counting, backoff scoring, and sampling.
-  `markov_cli.py` becomes the subcommand dispatcher. `generate_text()` is
-  preserved as a thin wrapper so the existing 57 tests continue to pass unchanged.
+  `markov_cli.py` becomes the subcommand dispatcher. `generate_text()` was
+  preserved as a thin wrapper so the existing 57 tests continued to pass
+  unchanged through M1–M6; it was retired with `markov.py` once `generate`
+  replaced both.
 - **Tokenization** — v1 ships one plain-prose tokenizer. It is defined behind a
   **pluggable interface** so domain profiles can be added later without touching
   the engine; that seam is the only concession v1 makes to future domain work.
@@ -278,5 +280,8 @@ rewrite.
    (both 54 of 54) while z still separates them (+2.85 and +2.79), and a document
    can out-score 52 of 54 and still be ordinary at z = +1.87. The count is the
    headline; z is the decision. A true percentile is still deferred.
-3. **Does `markov.py` remain** as the zero-argument demo front door once `markov
-   generate` exists?
+3. ~~**Does `markov.py` remain** as the zero-argument demo front door once
+   `markov generate` exists?~~ **Resolved after M6: no, it is retired.** It
+   duplicated `generate` while carrying both of the original script's defects,
+   and it was the only reason the test suite seeded the global RNG. The demo is
+   now `markov_cli.py generate --reference <file>`.
