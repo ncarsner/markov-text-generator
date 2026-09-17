@@ -1,9 +1,11 @@
 """Tests for the command-line layer: dispatch, reference resolution, reporting."""
 
 import json
+import os
 import re
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -54,6 +56,58 @@ class TestDispatch:
         )
         assert main() == 0
         assert "3 documents" in capsys.readouterr().out
+
+
+class TestEntryPoint:
+    """The installed `markov` command, run as a user would run it.
+
+    Everything else calls main() in-process, which proves nothing about the
+    [project.scripts] entry in pyproject.toml. These run the script the install
+    put beside the interpreter, so a missing or misnamed entry point fails here.
+    """
+
+    @pytest.fixture
+    def markov(self):
+        name = "markov.exe" if os.name == "nt" else "markov"
+        script = Path(sys.executable).parent / name
+        assert script.exists(), (
+            f"{script} is not installed; run `uv sync` to install the entry point"
+        )
+        return str(script)
+
+    def test_help_lists_every_subcommand(self, markov):
+        result = subprocess.run([markov, "--help"], capture_output=True, text=True)
+        assert result.returncode == 0, result.stderr
+        for command in ("analyze", "generate", "stats"):
+            assert command in result.stdout
+
+    def test_runs_a_subcommand_from_another_directory(self, markov, corpus_dir, tmp_path):
+        """No reliance on the repository being the working directory."""
+        result = subprocess.run(
+            [markov, "stats", "--reference", str(corpus_dir), "--order", "1"],
+            capture_output=True,
+            text=True,
+            cwd=tmp_path,
+        )
+        assert result.returncode == 0, result.stderr
+        assert "3 documents, 17 tokens" in result.stdout
+
+    def test_failure_exits_nonzero_with_the_reason_on_stderr(self, markov, tmp_path):
+        """main() returns and raises SystemExit; the wrapper must pass both
+        through, or a pipeline cannot tell a failed run from an empty one."""
+        result = subprocess.run(
+            [markov, "stats", "--reference", str(tmp_path / "nope.txt")],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 1
+        assert "nope.txt" in result.stderr
+        assert result.stdout == ""
+
+    def test_usage_errors_exit_2(self, markov):
+        result = subprocess.run([markov], capture_output=True, text=True)
+        assert result.returncode == 2
+        assert "usage: markov" in result.stderr
 
 
 class TestReferenceResolution:

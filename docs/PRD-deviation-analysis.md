@@ -284,4 +284,4 @@ rewrite.
    `markov generate` exists?~~ **Resolved after M6: no, it is retired.** It
    duplicated `generate` while carrying both of the original script's defects,
    and it was the only reason the test suite seeded the global RNG. The demo is
-   now `markov_cli.py generate --reference <file>`.
+   now `markov generate --reference <file>`.

@@ -1,16 +1,25 @@
 [project]
 name = "markov-text-generator"
 version = "0.1.0"
-description = "Order-2 Markov chain text generator over plain-text corpora"
+description = "Measure how far a document's language deviates from a reference corpus, with n-gram text generation as a by-product"
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = []
 
+[project.scripts]
+markov = "markov_cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# Two top-level modules rather than a package directory. Name them, so the
+# wheel carries the tool and nothing else in the repository root.
+[tool.hatch.build.targets.wheel]
+only-include = ["markov_cli.py", "markov_core.py"]
+
 [dependency-groups]
 dev = ["pytest>=8.0"]
-
-[tool.uv]
-package = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

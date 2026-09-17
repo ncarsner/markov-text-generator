@@ -34,13 +34,13 @@ engine.
 | | State |
 |---|---|
 | `markov_core.py` — counts, backoff scoring, sampling | **working** |
-| `markov_cli.py stats` — corpus diagnostics | **working** |
-| `markov_cli.py analyze` — document scoring | **working** |
-| `markov_cli.py analyze` — span localization | **working** |
-| `markov_cli.py generate` — text generation | **working** |
+| `markov stats` — corpus diagnostics | **working** |
+| `markov analyze` — document scoring | **working** |
+| `markov analyze` — span localization | **working** |
+| `markov generate` — text generation | **working** |
 
 Every example below is runnable. The original `markov.py` script has been
-retired; `markov_cli.py generate` replaces it.
+retired; `markov generate` replaces it.
 
 ## Understanding the metrics
 
@@ -166,7 +166,7 @@ continuation — where the model has no choice at all.
 than learned a pattern, and makes both a poor reference and a poor generator.
 **Check this before trusting any score.**
 
-`markov_cli.py stats` reports exactly this for your own corpus. Measured on the
+`markov stats` reports exactly this for your own corpus. Measured on the
 56-document public-domain corpus. **Both tokenizers are shown because the choice
 changes every number** — this is the same corpus twice, not a disagreement:
 
@@ -273,15 +273,15 @@ cannot attribute authorship.
 Requires [uv](https://docs.astral.sh/uv/).
 
 ```sh
-uv sync                                    # create the environment
+uv sync                                    # create the environment, install `markov`
 uv run python scripts/fetch_corpus.py      # download the sample corpus
-uv run pytest                              # 263 tests
+uv run pytest                              # 267 tests
 ```
 
 Check whether a reference corpus is big enough to score against:
 
 ```sh
-uv run python markov_cli.py stats \
+uv run markov stats \
     --reference 'data/input/speech_inaugural_*.txt' \
     --order 2
 ```
@@ -305,7 +305,7 @@ too sparse to trust. **Check this before believing any score below.**
 Score a document against a reference corpus:
 
 ```sh
-uv run python markov_cli.py analyze \
+uv run markov analyze \
     data/input/speech_we_choose_to_go_to_the_moon.txt \
     --reference 'data/input/speech_inaugural_*.txt'
 ```
@@ -352,7 +352,7 @@ print(f"{model.novel_ngram_rate(target):.0%} novel")      # 86%
 Generate text from the same counts, walked forwards instead of scored against:
 
 ```sh
-uv run python markov_cli.py generate \
+uv run markov generate \
     --reference data/input/speech_day_of_infamy.txt \
     --words 40 --seed 7
 ```
@@ -379,7 +379,7 @@ punctuation in the source, rather than at any capitalized word.
 Now measure that corpus and read the output again:
 
 ```sh
-uv run python markov_cli.py stats \
+uv run markov stats \
     --reference data/input/speech_day_of_infamy.txt \
     --order 2 --tokenizer whitespace
 ```
