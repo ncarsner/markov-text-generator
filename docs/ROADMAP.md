@@ -100,34 +100,44 @@ Small changes that everything else depends on.
 
 - ~~**`argparse`**~~ — **done** for `markov_cli.py`, which is now a subcommand
   dispatcher with `--help` and type validation. The positional-only interface
-  and its `0`-means-default sentinel are gone; `markov.py` still carries the
-  original positional form until `generate` lands.
-- **`random.Random(seed)` + `--seed`** — instantiate a generator rather than
-  using the global `random` module. Makes runs reproducible and lets the test
-  suite drop its autouse global-seeding fixture, which is currently a smell.
+  and its `0`-means-default sentinel are gone; `markov.py` retains the original
+  positional form, and is now superseded by `markov_cli.py generate`.
+- ~~**`random.Random(seed)` + `--seed`**~~ — **done** for `generate`, which draws
+  from its own instance rather than the global `random` module; a test pins that
+  `--seed` reproduces a run whatever else has seeded `random`. The autouse
+  global-seeding fixture stays only because `generate_text()` and its tests still
+  use the module-level RNG.
 - **`encoding="utf-8"` on every `open()` call** — a live bug, not a feature. A
   corpus containing smart quotes or em-dashes fails on a machine whose locale
-  default is not UTF-8. Fixed in `markov_cli.py`, and pinned by a test that
-  re-runs the CLI under `-X warn_default_encoding`, where an implicit `open()`
-  is an error. `markov.py` still reads with the locale default.
+  default is not UTF-8. Fixed in `markov_cli.py` on both the read and the write
+  side, each pinned by a test that re-runs the CLI under
+  `-X warn_default_encoding`, where an implicit `open()` is an error.
+  `markov.py` still reads with the locale default.
 
 ### Tier 2 — capability
 
-- **`--order N` via `collections.deque(maxlen=N)`** — order is baked into the
-  `(w1, w2)` tuple today. A bounded deque generalizes it in roughly four lines.
-  Given the table above, this converts a fixed, badly-chosen constant into the
-  parameter that most needs tuning per corpus.
+- ~~**`--order N`**~~ — **done**. Order is a parameter of `build_chain`,
+  `NgramModel`, and all three subcommands, not the constant baked into a
+  `(w1, w2)` tuple. `generate` defaults to 2 and `analyze`/`stats` to 3: the
+  table above is why, since order 3 is forced at 94% of its states and generates
+  little more than transcription.
 - **`collections.Counter` + `random.choices(pop, weights=…)`** — `possibles`
   stores a list *with duplicates*, so `random.choice` is already
   frequency-weighted (correct), but a word following a prefix 50 times is stored
   50 times. A `Counter` yields an identical distribution at a fraction of the
   memory. At 2,648 words this was theoretical; at 128,445 it is the difference
   that makes a still-larger corpus practical.
-- **`fileinput` + `nargs="+"`** — multiple input files and stdin for free.
-  `cat corpus/*.txt | markov --order 3` makes the tool composable.
-- **Sentence-aware stopping** — output currently ends mid-clause. Stopping on a
-  token ending in `.!?`, exposed as `--sentences N` alongside `--words N`, is a
-  handful of lines and the largest perceived-quality gain available.
+- **stdin** — the multi-file half of this is done: `--reference` takes
+  `nargs="+"` and accepts directories, globs, and file lists on every
+  subcommand. Reading a corpus from a pipe is what is left, and would make
+  `cat corpus/*.txt | markov generate` work.
+- ~~**Sentence-aware stopping**~~ — **done**, as `generate --sentences N`
+  alongside `--words N`. Stops on a token ending in `.!?` (closing quotes and
+  brackets allowed after), and starts at a context that follows one in the
+  source, so the output is whole sentences rather than two fragments around N
+  complete ones. Naive about abbreviations: `Mr.` ends a sentence as far as this
+  is concerned. Capped at 2,000 tokens so a corpus with no sentence punctuation
+  ends the run and says so.
 
 ### Tier 3 — worthwhile, less urgent
 
@@ -146,16 +156,20 @@ Small changes that everything else depends on.
 
 ### Known defects
 
-Both are pinned by the test suite as current-behavior tests, and both are
-fixable with the standard library alone.
+Both are pinned by the test suite as current-behavior tests. Both survive in
+`markov.py` and `generate_text()`, whose behavior is deliberately frozen, and
+neither exists in `markov_cli.py generate`, which is a separate walk.
 
 - **The corpus loops.** The `possibles[w2, ""]` sentinel makes the walk emit
   empty strings at the end of the source and then restart from the first word.
   `split()` and `textwrap.fill()` both collapse the empties, so printed output
-  silently splices the corpus end onto its beginning.
+  silently splices the corpus end onto its beginning. `generate` instead stops
+  where the corpus stops and reports the short run on stderr.
 - **All-lowercase input crashes.** Seeding requires a capitalized prefix;
   `random.choice` raises `IndexError` on an empty candidate list. Empty input,
-  blank lines, and whitespace-only input all reach the same path.
+  blank lines, and whitespace-only input all reach the same path. `generate`
+  falls back from sentence-opening contexts, to capitalized ones, to any context
+  at all, and only refuses a corpus with no word sequences in it.
 
 ## Where this tool still earns its place
 
@@ -209,11 +223,14 @@ axis that matters there.
 
 ## Suggested order of work
 
-1. Tier 1 in one pass — `argparse`, `Random(seed)`, UTF-8. Unblocks everything.
-   (Corpus scale, previously first here, is now done: 2.6k → 128k words.)
-2. `--order` and `--stats` together. They are the teaching story, and `--stats`
-   makes the effect of `--order` legible.
-3. Fix the two known defects, now that flags exist to control the alternatives.
-4. `Counter` + `random.choices`, then multi-file input — the pair that makes a
-   corpus large enough to matter practical.
-5. Sentence-aware stopping and the entry point as polish.
+Tier 1 is done, and `--order`, `--stats`, sentence-aware stopping and multi-file
+input arrived with the CLI. What is left, in order:
+
+1. Retire `markov.py`, or reduce it to a shim over `generate`. It is now
+   redundant; it carries both known defects, and it is the only reason the test
+   suite still seeds the global RNG. This is the cheapest of the four and closes
+   the defects as a side effect.
+2. `Counter` + `random.choices` — the change that makes a still-larger corpus
+   practical, and the one the PRD's 10⁷-token target depends on.
+3. Model persistence, so a large reference is built once rather than per run.
+4. The `[project.scripts]` entry point, giving `uv run markov`.

@@ -28,8 +28,8 @@ specification and [docs/ROADMAP.md](docs/ROADMAP.md) for engineering notes.
 
 ## Status
 
-Under active development. The engine is built and the CLI is being filled in one
-subcommand at a time.
+The v1 surface specified in the PRD is complete: three subcommands over one
+engine.
 
 | | State |
 |---|---|
@@ -37,12 +37,11 @@ subcommand at a time.
 | `markov_cli.py stats` — corpus diagnostics | **working** |
 | `markov_cli.py analyze` — document scoring | **working** |
 | `markov_cli.py analyze` — span localization | **working** |
-| `markov_cli.py generate` — text generation | planned |
-| `markov.py` — the original generation script | **working** |
+| `markov_cli.py generate` — text generation | **working** |
+| `markov.py` — the original generation script | **superseded** |
 
-Everything in [Understanding the metrics](#understanding-the-metrics) works today
-through `markov_core` or `stats`; the examples below are runnable. Until
-`generate` lands, `markov.py` remains the way to generate text.
+Every example below is runnable. `markov.py` is kept as the unchanged original,
+quirks included; `markov_cli.py generate` is the one to use.
 
 ## Understanding the metrics
 
@@ -277,7 +276,7 @@ Requires [uv](https://docs.astral.sh/uv/).
 ```sh
 uv sync                                    # create the environment
 uv run python scripts/fetch_corpus.py      # download the sample corpus
-uv run pytest                              # 239 tests
+uv run pytest                              # 299 tests
 ```
 
 Check whether a reference corpus is big enough to score against:
@@ -351,11 +350,60 @@ print(f"{model.novel_ngram_rate(target):.0%} novel")      # 86%
 ```
 
 
-Generate text (the original script, until `markov_cli.py generate` lands):
+Generate text from the same counts, walked forwards instead of scored against:
 
 ```sh
-uv run python markov.py data/input/speech_day_of_infamy.txt 50
+uv run python markov_cli.py generate \
+    --reference data/input/speech_day_of_infamy.txt \
+    --words 40 --seed 7
 ```
+
+```
+In addition, American ships have been lost. In addition, American
+ships have been reported torpedoed on the high seas between San
+Francisco and Honolulu. Yesterday, the Japanese government also
+launched an attack against Malaya. Last night, Japanese forces
+attacked Hong
+```
+
+`--seed` makes a run reproducible; without it, output differs every time.
+`--sentences N` stops on sentence-ending punctuation rather than a word count,
+`--order N` trades variety for fidelity, and `--output PATH` writes the text to a
+file, leaving stdout clean for a pipeline.
+
+Two things this deliberately does that `markov.py` does not. It **stops when the
+corpus runs out** rather than looping silently back to the first word — you get a
+note on stderr instead of two unrelated passages spliced together. And it starts
+at a real sentence opening, taken from contexts that follow sentence-ending
+punctuation in the source, rather than at any capitalized word.
+
+Now measure that corpus and read the output again:
+
+```sh
+uv run python markov_cli.py stats \
+    --reference data/input/speech_day_of_infamy.txt \
+    --order 2 --tokenizer whitespace
+```
+
+```
+  order   branching   forced
+      1        1.67     79%
+      2        1.08     95%
+```
+
+At 515 words this single speech is forced at **95%** of its order-2 states — the
+chain almost never has a choice — and the output shows it. `American ships have
+been reported torpedoed on the high seas between San Francisco and Honolulu` is
+fifteen words lifted whole from the speech, and `In addition, American ships have
+been` occurs once in the source but twice in the output, because the walk came
+back through the same state and had nowhere else to go.
+
+This is the measurement being borne out rather than a defect in the generator,
+and it is the reason **generated text inherits the licence of the corpus it was
+built from.** Generating from the 54-speech corpus instead drops the forced share
+to 82% — same tokenizer, 244x the text — and the quotation with it; see
+[Memorization](docs/ROADMAP.md#memorization-is-the-central-constraint) for that
+measured across 200 seeds.
 
 ## The corpus
 
@@ -383,7 +431,9 @@ Tokenizer choice changes every number, so it is stated with each result:
 - **`plain_tokens`** — lowercased, punctuation dropped. Used for analysis, where
   `Freedom!` and `freedom` are the same evidence.
 - **`whitespace_tokens`** — case and punctuation preserved. Used for generation,
-  where output should read like the source.
+  where output should read like the source. `generate` uses this one always, and
+  has no `--tokenizer` flag: the analysis tokenizer discards exactly what
+  generated text needs to carry.
 
 ## Development
 
