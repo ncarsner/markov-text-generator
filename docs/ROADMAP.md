@@ -51,7 +51,7 @@ transcribe the source):
 Measured with whitespace tokenization, which is the generator's view of the
 text. The analysis engine lowercases and drops punctuation, which yields
 different figures for the same corpus; see the README's side-by-side table.
-Reproduce this row with `markov_cli.py stats --tokenizer whitespace`.
+Reproduce this row with `markov stats --tokenizer whitespace`.
 
 | Corpus | Words | Vocab | order 1 | order 2 | order 3 |
 |---|---:|---:|---|---|---|
@@ -151,8 +151,14 @@ Small changes that everything else depends on.
 - **`re` tokenization** — `r"\w+|[^\w\s]"` separates punctuation from words so
   `last!` and `last` stop being distinct tokens. Requires a detokenizer to
   reassemble output, so this is a genuine trade-off rather than a clear win.
-- **`[project.scripts]` entry point** — `markov = "markov_cli:main"` now that
-  `pyproject.toml` exists, giving `uv run markov`.
+- ~~**`[project.scripts]` entry point**~~ — **done**. `uv sync` installs a
+  `markov` command, so `uv run markov stats …` replaces
+  `uv run python markov_cli.py stats …`. It needed a build backend as well as the
+  `[project.scripts]` line: uv installs entry points only for a project it
+  builds, and the project had been marked `package = false`. Hatchling builds
+  it, and the wheel carries only `markov_cli.py` and `markov_core.py`. The
+  runtime stays standard-library-only; hatchling is needed only at install
+  time.
 
 ### Known defects
 
@@ -221,9 +227,8 @@ axis that matters there.
 
 Tier 1 is done, and `--order`, `--stats`, sentence-aware stopping and multi-file
 input arrived with the CLI. `markov.py` has been retired, taking both known
-defects with it. What is left, in order:
+defects with it, and `uv run markov` is the command. What is left, in order:
 
 1. `Counter` + `random.choices` — the change that makes a still-larger corpus
    practical, and the one the PRD's 10⁷-token target depends on.
 2. Model persistence, so a large reference is built once rather than per run.
-3. The `[project.scripts]` entry point, giving `uv run markov`.
