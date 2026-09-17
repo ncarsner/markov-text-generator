@@ -5,10 +5,11 @@ counts serve the two applications:
 
 - ``NgramModel`` scores how surprising a document is under a reference corpus,
   which is the principal application (see docs/PRD-deviation-analysis.md).
-- ``build_chain`` and ``sample`` walk the same n-grams to emit text, which is
-  the side effect.
+- ``build_chain`` and ``walk`` walk the same n-grams to emit text, which is the
+  side effect.
 
-Standard library only, and deterministic apart from ``sample``.
+Standard library only, and deterministic apart from ``walk``, which takes the
+random generator it draws from.
 """
 
 import bisect
@@ -131,10 +132,9 @@ def capitalized_contexts(chain):
 def walk(chain, start, order, rng=random, limit=None, stop=None):
     """Yield tokens following ``start``, ending when the chain runs out.
 
-    The generator form of ``sample``, and the difference is the ending. A
-    corpus has a last word, and the context that follows it has no recorded
-    continuation; this stops there. ``sample`` raises instead, which is the
-    older contract and is kept because ``markov.py`` depends on it.
+    A corpus has a last word, and the context that follows it has no recorded
+    continuation; the walk stops there rather than raising or looping back to
+    the start of the corpus.
 
     ``limit`` caps how many tokens are produced. ``stop`` is called with each
     token as it is emitted and ends the walk when it returns true, which is how
@@ -163,22 +163,6 @@ def walk(chain, start, order, rng=random, limit=None, stop=None):
         context = tuple(out[-order:])
         if stop is not None and stop(word):
             return
-
-
-def sample(chain, start, count, order, rng=random):
-    """Walk the chain from ``start``, returning it followed by ``count`` tokens.
-
-    Raises IndexError if the walk reaches a context with no recorded
-    continuations.
-    """
-    out = list(start)
-    out.extend(walk(chain, start, order, rng=rng, limit=count))
-    if len(out) - len(start) < count:
-        raise IndexError(
-            f"chain reached a context with no continuations after "
-            f"{len(out) - len(start)} of {count} tokens"
-        )
-    return out
 
 
 # --- Counts and scoring (analysis) ----------------------------------------

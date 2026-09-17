@@ -100,19 +100,19 @@ Small changes that everything else depends on.
 
 - ~~**`argparse`**~~ — **done** for `markov_cli.py`, which is now a subcommand
   dispatcher with `--help` and type validation. The positional-only interface
-  and its `0`-means-default sentinel are gone; `markov.py` retains the original
-  positional form, and is now superseded by `markov_cli.py generate`.
+  and its `0`-means-default sentinel are gone, and `markov.py`, the last place
+  that form survived, has been retired.
 - ~~**`random.Random(seed)` + `--seed`**~~ — **done** for `generate`, which draws
   from its own instance rather than the global `random` module; a test pins that
   `--seed` reproduces a run whatever else has seeded `random`. The autouse
-  global-seeding fixture stays only because `generate_text()` and its tests still
-  use the module-level RNG.
+  global-seeding fixture was removed along with `generate_text()`, the last code
+  that needed it.
 - **`encoding="utf-8"` on every `open()` call** — a live bug, not a feature. A
   corpus containing smart quotes or em-dashes fails on a machine whose locale
   default is not UTF-8. Fixed in `markov_cli.py` on both the read and the write
   side, each pinned by a test that re-runs the CLI under
-  `-X warn_default_encoding`, where an implicit `open()` is an error.
-  `markov.py` still reads with the locale default.
+  `-X warn_default_encoding`, where an implicit `open()` is an error. No code
+  in the repository reads or writes with the locale default any more.
 
 ### Tier 2 — capability
 
@@ -156,20 +156,16 @@ Small changes that everything else depends on.
 
 ### Known defects
 
-Both are pinned by the test suite as current-behavior tests. Both survive in
-`markov.py` and `generate_text()`, whose behavior is deliberately frozen, and
-neither exists in `markov_cli.py generate`, which is a separate walk.
+None open. The original script had two, and both went with it when `markov.py`
+and `generate_text()` were retired:
 
-- **The corpus loops.** The `possibles[w2, ""]` sentinel makes the walk emit
-  empty strings at the end of the source and then restart from the first word.
-  `split()` and `textwrap.fill()` both collapse the empties, so printed output
-  silently splices the corpus end onto its beginning. `generate` instead stops
-  where the corpus stops and reports the short run on stderr.
-- **All-lowercase input crashes.** Seeding requires a capitalized prefix;
-  `random.choice` raises `IndexError` on an empty candidate list. Empty input,
-  blank lines, and whitespace-only input all reach the same path. `generate`
-  falls back from sentence-opening contexts, to capitalized ones, to any context
-  at all, and only refuses a corpus with no word sequences in it.
+- **The corpus looped.** A sentinel made the walk emit empty strings at the end
+  of the source and restart from the first word, silently splicing the corpus
+  end onto its beginning. `generate` stops where the corpus stops and reports the
+  short run on stderr.
+- **All-lowercase input crashed.** Seeding required a capitalized prefix, and
+  `random.choice` raised `IndexError` when there was none. `generate` falls back
+  from sentence-opening contexts, to capitalized ones, to any context at all.
 
 ## Where this tool still earns its place
 
@@ -179,12 +175,12 @@ than a stronger one.
 
 ### Teaching (strongest fit)
 
-The canonical first generative model: ~66 lines, no dependencies, no GPU, fully
-inspectable. Adding `--order` and `--stats` makes it a laboratory in which a
-student watches order 1 → 4 slide from gibberish into verbatim plagiarism *and
-reads the numbers explaining why*. That is a lesson about memorization and
-overfitting that transfers directly to reasoning about modern models — and this
-repository is already most of the way there.
+The canonical first generative model: the walk itself is about twenty lines of
+`markov_core.walk`, with no dependencies, no GPU, and nothing hidden. With
+`generate --order` and `stats` side by side it is a laboratory in which a student
+watches order 1 → 4 slide from gibberish into verbatim plagiarism *and reads the
+numbers explaining why*. That is a lesson about memorization and overfitting that
+transfers directly to reasoning about modern models.
 
 ### Deterministic test fixtures
 
@@ -224,13 +220,10 @@ axis that matters there.
 ## Suggested order of work
 
 Tier 1 is done, and `--order`, `--stats`, sentence-aware stopping and multi-file
-input arrived with the CLI. What is left, in order:
+input arrived with the CLI. `markov.py` has been retired, taking both known
+defects with it. What is left, in order:
 
-1. Retire `markov.py`, or reduce it to a shim over `generate`. It is now
-   redundant; it carries both known defects, and it is the only reason the test
-   suite still seeds the global RNG. This is the cheapest of the four and closes
-   the defects as a side effect.
-2. `Counter` + `random.choices` — the change that makes a still-larger corpus
+1. `Counter` + `random.choices` — the change that makes a still-larger corpus
    practical, and the one the PRD's 10⁷-token target depends on.
-3. Model persistence, so a large reference is built once rather than per run.
-4. The `[project.scripts]` entry point, giving `uv run markov`.
+2. Model persistence, so a large reference is built once rather than per run.
+3. The `[project.scripts]` entry point, giving `uv run markov`.

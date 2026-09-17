@@ -6,9 +6,7 @@ worth scoring against, which is the question that gates everything else.
 deviates from that corpus (see docs/PRD-deviation-analysis.md).
 
 `generate` walks the same counts forwards instead of scoring against them. It is
-the by-product, not the point, and it is deliberately not the same code path as
-markov.py: that script keeps its original behavior, quirks included, and
-generate_text() below is the engine behind it.
+the by-product, not the point.
 """
 
 import argparse
@@ -22,8 +20,6 @@ import sys
 import textwrap
 
 import markov_core
-
-ORDER = 2
 
 # The README states a reference corpus of roughly 10^5 tokens as the point
 # below which scores are dominated by sparsity rather than by the corpus.
@@ -40,33 +36,6 @@ VARIANT_Z = 2.5
 # through the corpus rather than taken as a contiguous block: a reference
 # ordered by date would otherwise hold out one era and call it the expectation.
 HOLDOUT_EVERY = 5
-
-
-def generate_text(input_text, num_words=None):
-    """Generate text from an order-2 chain over ``input_text`` (a list of lines).
-
-    A thin wrapper over markov_core that preserves this function's original
-    behavior exactly, quirks included: the walk is seeded from a capitalized
-    context, and the two sentinel entries below make it loop back to the start
-    of the corpus rather than stop at the end. Both are pinned by tests.
-    """
-    words = [word for line in input_text for word in line.split()]
-
-    # Padding with two empty tokens reproduces the original's starting state,
-    # in which the first words of the corpus follow an empty context.
-    padded = ["", ""] + words
-    chain = markov_core.build_chain(padded, ORDER)
-
-    # Close the chain at the end of the corpus. These are what make the walk
-    # wrap around to the first word instead of terminating.
-    chain[padded[-2], padded[-1]].append("")
-    chain[padded[-1], ""].append("")
-
-    if num_words is None:
-        num_words = len(words)
-
-    start = random.choice(markov_core.capitalized_contexts(chain))
-    return " ".join(markov_core.sample(chain, start, num_words, ORDER))
 
 
 # --- Reference corpus ------------------------------------------------------
@@ -723,10 +692,8 @@ def opening_context(tokens, chain, order, rng):
     avoids a leading fragment, which matters most under --sentences, where
     whole sentences are what was asked for.
 
-    Falls back to the capitalized proxy, and then to any context at all:
-    markov.py raises IndexError on an all-lowercase corpus (a known defect,
-    pinned there as current behavior), but such a corpus is unusual, not
-    unusable.
+    Falls back to the capitalized proxy, and then to any context at all. A
+    corpus without capitals or sentence punctuation is unusual, not unusable.
     """
     candidates = [
         tuple(tokens[i:i + order])
@@ -750,9 +717,8 @@ def generate_tokens(chain, start, order, rng, words=None, sentences=None):
     ``--words 1`` quietly returning two.
 
     Two stopping conditions, and a third nobody asked for: the corpus can run
-    out. Saying so is what the note is for. markov.py instead loops back to the
-    first word of the corpus, splicing two unrelated passages together and
-    reporting nothing.
+    out. Saying so is what the note is for; looping back to the first word
+    instead would splice two unrelated passages together and report nothing.
     """
     start = list(start)
 

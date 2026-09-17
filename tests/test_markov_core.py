@@ -13,7 +13,6 @@ from markov_core import (
     chain_statistics,
     get_tokenizer,
     plain_tokens,
-    sample,
     walk,
     whitespace_tokens,
 )
@@ -85,41 +84,27 @@ class TestCapitalizedContexts:
         assert capitalized_contexts(build_chain(CORPUS, 2)) == []
 
 
-class TestSample:
-    def test_returns_start_plus_count_tokens(self):
-        out = sample(build_chain(CYCLE, 2), ("Alpha", "beta"), 5, 2)
-        assert len(out) == 7
-        assert out[:2] == ["Alpha", "beta"]
-
-    def test_only_follows_recorded_transitions(self):
-        chain = build_chain(CYCLE, 2)
-        out = sample(chain, ("Alpha", "beta"), 6, 2)
-        for i in range(len(out) - 2):
-            assert out[i + 2] in chain[(out[i], out[i + 1])]
-
-    def test_is_reproducible_with_a_seeded_generator(self):
-        chain = build_chain(CYCLE, 2)
-        first = sample(chain, ("Alpha", "beta"), 10, 2, rng=random.Random(7))
-        assert sample(chain, ("Alpha", "beta"), 10, 2, rng=random.Random(7)) == first
-
-    def test_running_off_the_end_of_the_corpus_raises(self):
-        """CORPUS ends at 'the rat'; nothing follows it."""
-        with pytest.raises(IndexError):
-            sample(build_chain(CORPUS, 2), ("the", "rat"), 1, 2)
-
-    def test_dead_end_raises(self):
-        with pytest.raises(IndexError):
-            sample(build_chain(CORPUS, 2), ("no", "such"), 1, 2)
-
-
 class TestWalk:
     def test_yields_only_the_tokens_after_the_start(self):
         out = list(walk(build_chain(CYCLE, 2), ("Alpha", "beta"), 2, limit=4))
         assert out == ["gamma", "Alpha", "beta", "gamma"]
 
     def test_stops_at_the_end_of_the_corpus_instead_of_raising(self):
-        """The difference from sample(). CORPUS ends at 'the rat'."""
+        """CORPUS ends at 'the rat'; nothing follows it."""
         assert list(walk(build_chain(CORPUS, 2), ("the", "rat"), 2, limit=10)) == []
+
+    def test_an_unknown_start_yields_nothing(self):
+        assert list(walk(build_chain(CORPUS, 2), ("no", "such"), 2, limit=5)) == []
+
+    @pytest.mark.parametrize("seed", range(10))
+    def test_only_follows_recorded_transitions(self, seed):
+        """CORPUS branches after 'the', so the walk makes real choices here."""
+        chain = build_chain(CORPUS, 2)
+        out = ["the", "cat"] + list(
+            walk(chain, ("the", "cat"), 2, rng=random.Random(seed), limit=20)
+        )
+        for i in range(len(out) - 2):
+            assert out[i + 2] in chain[(out[i], out[i + 1])]
 
     def test_a_short_walk_is_not_padded(self):
         """'ate the rat' ends the corpus, so the walk yields what it can."""

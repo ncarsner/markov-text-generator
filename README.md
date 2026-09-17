@@ -38,10 +38,9 @@ engine.
 | `markov_cli.py analyze` — document scoring | **working** |
 | `markov_cli.py analyze` — span localization | **working** |
 | `markov_cli.py generate` — text generation | **working** |
-| `markov.py` — the original generation script | **superseded** |
 
-Every example below is runnable. `markov.py` is kept as the unchanged original,
-quirks included; `markov_cli.py generate` is the one to use.
+Every example below is runnable. The original `markov.py` script has been
+retired; `markov_cli.py generate` replaces it.
 
 ## Understanding the metrics
 
@@ -276,7 +275,7 @@ Requires [uv](https://docs.astral.sh/uv/).
 ```sh
 uv sync                                    # create the environment
 uv run python scripts/fetch_corpus.py      # download the sample corpus
-uv run pytest                              # 299 tests
+uv run pytest                              # 263 tests
 ```
 
 Check whether a reference corpus is big enough to score against:
@@ -371,7 +370,7 @@ attacked Hong
 `--order N` trades variety for fidelity, and `--output PATH` writes the text to a
 file, leaving stdout clean for a pipeline.
 
-Two things this deliberately does that `markov.py` does not. It **stops when the
+Two things this does that the original `markov.py` script did not. It **stops when the
 corpus runs out** rather than looping silently back to the first word — you get a
 note on stderr instead of two unrelated passages spliced together. And it starts
 at a real sentence opening, taken from contexts that follow sentence-ending
