@@ -88,7 +88,7 @@ class TestRanking:
         assert rank_spans(means, 1, 2) == [1, 3]
 
     def test_overlapping_spans_are_suppressed(self):
-        """Neighbouring windows share all but one token and score alike; a raw
+        """Neighboring windows share all but one token and score alike; a raw
         ranking would return the same passage a dozen times, one token over."""
         means = [9.0, 8.9, 8.8, 1.0, 5.0]
         assert rank_spans(means, 3, 2) == [0, 4]

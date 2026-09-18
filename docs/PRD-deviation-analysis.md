@@ -199,8 +199,13 @@ surface for review pipelines.
   randomness, from its own `random.Random` instance rather than the global
   module, so `--seed` reproduces a run regardless of what else has seeded
   `random`.
-- **Performance** — target corpora are 10⁵–10⁷ tokens. Use `Counter` rather than
-  duplicate-storing lists (see ROADMAP); scoring is O(tokens × order).
+- **Performance** — target corpora are 10⁵–10⁷ tokens. Scoring is
+  O(tokens × order). Leave-one-out calibration subtracts each document's counts
+  from one whole-corpus model rather than building a model per document, so its
+  cost no longer grows with document count: the 54 inaugurals fell from 5.3s and
+  175 MB to 0.4s and 75 MB, with output unchanged. This bullet previously
+  recommended `Counter` over duplicate-storing lists; measurement contradicted
+  that and the ROADMAP records the numbers.
 
 ## Milestones
 

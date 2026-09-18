@@ -210,7 +210,7 @@ Passages are quoted **as written**, punctuation and capitals intact, even though
 the model reads them lowercased and stripped: you have to be able to find the
 passage in the document.
 
-Overlapping spans are suppressed. Neighbouring windows share all but one token
+Overlapping spans are suppressed. Neighboring windows share all but one token
 and score almost identically, so without suppression the same passage fills the
 whole list, shifted one token at a time.
 
@@ -275,7 +275,7 @@ Requires [uv](https://docs.astral.sh/uv/).
 ```sh
 uv sync                                    # create the environment, install `markov`
 uv run python scripts/fetch_corpus.py      # download the sample corpus
-uv run pytest                              # 267 tests
+uv run pytest                              # 294 tests
 ```
 
 Check whether a reference corpus is big enough to score against:
@@ -398,7 +398,7 @@ been` occurs once in the source but twice in the output, because the walk came
 back through the same state and had nowhere else to go.
 
 This is the measurement being borne out rather than a defect in the generator,
-and it is the reason **generated text inherits the licence of the corpus it was
+and it is the reason **generated text inherits the license of the corpus it was
 built from.** Generating from the 54-speech corpus instead drops the forced share
 to 82% — same tokenizer, 244x the text — and the quotation with it; see
 [Memorization](docs/ROADMAP.md#memorization-is-the-central-constraint) for that
@@ -421,7 +421,7 @@ Every text used is a work of the United States federal government and is
 uncopyrighted under
 [17 U.S.C. § 105](https://www.law.cornell.edu/uscode/text/17/105). This is
 deliberate: the generator reproduces multi-word spans from its source verbatim,
-so generated output inherits the licence of the corpus it was trained on.
+so generated output inherits the license of the corpus it was trained on.
 
 ## Two views of the same text
 

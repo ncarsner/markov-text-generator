@@ -85,7 +85,7 @@ is lifted intact. Two consequences survive:
 1. **Corpus scale remains the highest-leverage input.** It is now demonstrated,
    not assumed: every further quality gain is cheaper to buy with more text than
    with better code.
-2. **Output inherits the corpus's licence.** Because the model still reproduces
+2. **Output inherits the corpus's license.** Because the model still reproduces
    multi-word spans verbatim, generated text from a copyrighted corpus is a
    derivative of it in the most literal sense. This is why the corpus stays
    untracked and why evaluation is restricted to public-domain sources.
@@ -121,12 +121,35 @@ Small changes that everything else depends on.
   `(w1, w2)` tuple. `generate` defaults to 2 and `analyze`/`stats` to 3: the
   table above is why, since order 3 is forced at 94% of its states and generates
   little more than transcription.
-- **`collections.Counter` + `random.choices(pop, weights=…)`** — `possibles`
-  stores a list *with duplicates*, so `random.choice` is already
-  frequency-weighted (correct), but a word following a prefix 50 times is stored
-  50 times. A `Counter` yields an identical distribution at a fraction of the
-  memory. At 2,648 words this was theoretical; at 128,445 it is the difference
-  that makes a still-larger corpus practical.
+- ~~**`collections.Counter` + `random.choices(pop, weights=…)`**~~ —
+  **rejected on measurement**. The claim here was that `possibles`, a list
+  storing a word once per occurrence, wastes memory a `Counter` would save at
+  an identical distribution. The distribution part is right; the memory part is
+  backwards at this corpus's shape.
+
+  An empty `Counter` costs about 200 bytes against a 1-element list's 64–88, so
+  a context has to repeat roughly 16–24 times before the dictionary pays for
+  itself. The corpus averages **1.82 occurrences per context**, 80% of contexts
+  are seen exactly once, and **0.43%** reach the break-even point. Measured over
+  the whole table:
+
+  | Order | List | `Counter` | |
+  |---|---:|---:|---|
+  | 2 | 13.5 MB | 23.1 MB | 1.71× worse |
+  | 3 | 22.9 MB | 37.9 MB | 1.65× worse |
+
+  Repeating the corpus eight times, which lifts the average context to 14.6
+  occurrences, still leaves `Counter` 1.20× worse. Natural language is
+  Zipfian: the many contexts are rare and the frequent ones are few, so the
+  per-context overhead dominates whatever the totals are.
+
+  The premise was also wrong about which structure is the constraint. The
+  generation chain is not what a 10⁷-token corpus strains — the analysis
+  `NgramModel` is, at roughly 115 bytes per stored n-gram, with distinct
+  n-grams growing as `6.74 × tokens^0.867` (Heaps' law). That projects about
+  7.9M n-grams, near 0.9 GB, at 10⁷ tokens. Smaller keys there — interning
+  tokens to integer IDs — is the change that would earn its complexity, and it
+  is not needed until corpora approach 10⁶.
 - **stdin** — the multi-file half of this is done: `--reference` takes
   `nargs="+"` and accepts directories, globs, and file lists on every
   subcommand. Reading a corpus from a pipe is what is left, and would make
@@ -145,9 +168,23 @@ Small changes that everything else depends on.
   branching/forced table for the user's own corpus, in either tokenizer, as text
   or JSON. This is what turns the repository from a script into an instrument;
   see [Teaching](#teaching-strongest-fit).
+- ~~**Leave-one-out without rebuilding**~~ — **done**. Calibration built one
+  model per reference document, so its cost was document count × corpus size.
+  Counts are integers, so the same table is reached by subtracting a document's
+  own n-grams from one whole-corpus model: `NgramModel.without` does that and
+  puts it back afterwards, in a `finally` so a failure mid-run cannot leave the
+  shared model damaged. Equal to a rebuild rather than close to it — the seam
+  n-grams a document's removal destroys and creates are handled explicitly, and
+  a test checks every count, the token total, and the vocabulary against a real
+  rebuild. On the 54 inaugurals: **5.3s to 0.4s, and 175 MB to 75 MB peak**,
+  with output byte-identical.
+
 - **Model persistence** — build once, generate many. Use `json` with encoded
   tuple keys, **not `pickle`**: unpickling executes arbitrary code, and a saved
-  model is exactly the sort of file people pass around.
+  model is exactly the sort of file people pass around. Now the larger remaining
+  win for the analysis path: subtraction removed the per-document rebuild, so
+  what is left is the one build per run, which a general reference reused across
+  many targets pays over and over.
 - **`re` tokenization** — `r"\w+|[^\w\s]"` separates punctuation from words so
   `last!` and `last` stop being distinct tokens. Requires a detokenizer to
   reassemble output, so this is a genuine trade-off rather than a clear win.
@@ -229,6 +266,13 @@ Tier 1 is done, and `--order`, `--stats`, sentence-aware stopping and multi-file
 input arrived with the CLI. `markov.py` has been retired, taking both known
 defects with it, and `uv run markov` is the command. What is left, in order:
 
-1. `Counter` + `random.choices` — the change that makes a still-larger corpus
-   practical, and the one the PRD's 10⁷-token target depends on.
-2. Model persistence, so a large reference is built once rather than per run.
+1. Model persistence, so a large reference is built once rather than per run.
+   With leave-one-out no longer rebuilding per document, this is the remaining
+   per-run cost, and the one a reused general reference pays most.
+2. Reading a corpus from stdin, the half of the stdin item still outstanding.
+3. Smaller n-gram keys — interning tokens to integer IDs — if and when corpora
+   approach 10⁶ tokens. Not before: at 128,445 the model is 23 MB and the
+   complexity buys nothing.
+
+`Counter` + `random.choices` was item 1 here until it was measured; it is
+rejected above, with the numbers.
