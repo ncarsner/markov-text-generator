@@ -275,7 +275,7 @@ Requires [uv](https://docs.astral.sh/uv/).
 ```sh
 uv sync                                    # create the environment, install `markov`
 uv run python scripts/fetch_corpus.py      # download the sample corpus
-uv run pytest                              # 267 tests
+uv run pytest                              # 294 tests
 ```
 
 Check whether a reference corpus is big enough to score against:

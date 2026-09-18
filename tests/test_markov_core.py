@@ -182,6 +182,130 @@ class TestNgramModelCounts:
         assert NgramModel(iter(CORPUS), order=2).total == 11
 
 
+# Three documents chosen so the joins matter. Laid end to end they produce
+# ("mat", "the") and ("log", "a"); take the middle one out and the neighbours
+# meet at ("mat", "a"), which no document contains.
+DOCUMENTS = [
+    "the cat sat on the mat".split(),
+    "the dog sat on the log".split(),
+    "a rat ate the mat".split(),
+]
+
+FLAT = [token for document in DOCUMENTS for token in document]
+
+
+def rebuilt(held, order):
+    """The model ``without(held)`` has to equal: built from the rest, joined."""
+    return NgramModel(
+        [token for i, document in enumerate(DOCUMENTS) if i != held
+         for token in document],
+        order=order,
+    )
+
+
+class TestFromDocuments:
+    def test_counts_match_the_concatenation(self):
+        """Remembering the boundaries must not change a single count."""
+        model = NgramModel.from_documents(DOCUMENTS, order=3)
+        assert model.counts == NgramModel(FLAT, order=3).counts
+        assert model.total == len(FLAT)
+
+    def test_records_where_each_document_sits(self):
+        model = NgramModel.from_documents(DOCUMENTS, order=2)
+        assert model.bounds == [(0, 6), (6, 12), (12, 17)]
+
+    def test_a_plain_model_is_one_document(self):
+        assert NgramModel(CORPUS, order=2).bounds == [(0, 11)]
+
+
+class TestWithout:
+    """Leave-one-out by subtraction has to equal leave-one-out by rebuilding."""
+
+    @pytest.fixture
+    def model(self):
+        return NgramModel.from_documents(DOCUMENTS, order=3)
+
+    @pytest.mark.parametrize("held", [0, 1, 2])
+    @pytest.mark.parametrize("order", [1, 2, 3])
+    def test_matches_a_rebuild(self, held, order):
+        model = NgramModel.from_documents(DOCUMENTS, order=order)
+        reference = rebuilt(held, order)
+        with model.without(held) as subtracted:
+            assert subtracted.counts == reference.counts
+            assert subtracted.total == reference.total
+            assert subtracted.vocab == reference.vocab
+
+    @pytest.mark.parametrize("held", [0, 1, 2])
+    def test_scores_match_a_rebuild(self, held, model):
+        with model.without(held) as subtracted:
+            assert (subtracted.bits_per_token(DOCUMENTS[held])
+                    == rebuilt(held, 3).bits_per_token(DOCUMENTS[held]))
+
+    def test_the_join_the_removal_creates_is_counted(self, model):
+        """The neighbours now meet, and that n-gram was in no document."""
+        assert ("mat", "a") not in model.counts[2]
+        with model.without(1) as subtracted:
+            assert subtracted.counts[2][("mat", "a")] == 1
+            assert subtracted.counts[3][("the", "mat", "a")] == 1
+
+    def test_the_joins_the_removal_destroys_are_uncounted(self, model):
+        with model.without(1) as subtracted:
+            assert ("mat", "the") not in subtracted.counts[2]
+            assert ("log", "a") not in subtracted.counts[2]
+
+    def test_a_removed_document_takes_its_own_words_out_of_the_vocabulary(self, model):
+        """Deleted, not left at zero: vocab is the size of the unigram table, and
+        a zero entry there would inflate the floor every unseen word is scored
+        against."""
+        with model.without(1) as subtracted:
+            assert ("dog",) not in subtracted.counts[1]
+            assert subtracted.vocab == len(subtracted.counts[1])
+
+    def test_a_word_the_others_also_use_only_loses_that_document_s_share(self, model):
+        assert model.counts[1][("the",)] == 5
+        with model.without(1) as subtracted:
+            assert subtracted.counts[1][("the",)] == 3
+
+    def test_restores_the_model_afterwards(self, model):
+        before = NgramModel.from_documents(DOCUMENTS, order=3)
+        with model.without(1):
+            pass
+        assert model.counts == before.counts
+        assert (model.total, model.vocab) == (before.total, before.vocab)
+
+    def test_restores_the_model_after_a_failure(self, model):
+        """A half-subtracted model is wrong for every later document, not just
+        the one that failed."""
+        before = NgramModel.from_documents(DOCUMENTS, order=3)
+        with pytest.raises(RuntimeError):
+            with model.without(1):
+                raise RuntimeError("scoring blew up")
+        assert model.counts == before.counts
+        assert (model.total, model.vocab) == (before.total, before.vocab)
+
+    def test_every_document_in_turn_leaves_the_model_where_it_started(self, model):
+        before = NgramModel.from_documents(DOCUMENTS, order=3)
+        for _ in range(2):
+            for held in range(len(DOCUMENTS)):
+                with model.without(held):
+                    pass
+        assert model.counts == before.counts
+
+    def test_a_span_removed_twice_is_refused(self, model):
+        """The guard against silently corrupting the shared model: counts that
+        would go negative mean the bounds no longer describe the corpus."""
+        model.bounds.append(model.bounds[0])
+        with model.without(0):
+            with pytest.raises(ValueError, match="negative count"):
+                with model.without(3):
+                    pass
+
+    def test_an_unknown_document_is_refused(self, model):
+        with pytest.raises(IndexError):
+            with model.without(9):
+                pass
+
+
 class TestBackoff:
     """The backoff level is what makes a flagged span explainable."""
 

@@ -14,6 +14,7 @@ random generator it draws from.
 
 import bisect
 import collections
+import contextlib
 import math
 import random
 import re
@@ -188,6 +189,120 @@ class NgramModel:
             for i in range(len(tokens) - n + 1):
                 counter[tuple(tokens[i:i + n])] += 1
         self.total = len(tokens)
+        self.vocab = len(self.counts[1])
+        # Kept so a document's own n-grams can be subtracted again later; see
+        # ``without``. One document unless ``from_documents`` says otherwise.
+        self.tokens = tokens
+        self.bounds = [(0, len(tokens))]
+
+    @classmethod
+    def from_documents(cls, documents, order=DEFAULT_ORDER, alpha=BACKOFF_ALPHA):
+        """Build one model over several documents, remembering where each sits.
+
+        The counts are identical to those of a model built from the documents
+        concatenated, seam n-grams included. What this adds is the bookkeeping
+        ``without`` needs to take one document back out again.
+        """
+        documents = [list(document) for document in documents]
+        model = cls(
+            [token for document in documents for token in document],
+            order=order,
+            alpha=alpha,
+        )
+        bounds = []
+        start = 0
+        for document in documents:
+            bounds.append((start, start + len(document)))
+            start += len(document)
+        model.bounds = bounds
+        return model
+
+    # -- leave-one-out --
+
+    @contextlib.contextmanager
+    def without(self, index):
+        """Score against every document but this one, without rebuilding.
+
+        Leave-one-out calibration needs a model per document, and building each
+        from scratch costs the whole corpus every time. Counts are integers, so
+        the same table can be reached by subtraction: what the corpus holds,
+        minus what this document contributed.
+
+        The subtlety is the seam. The counts come from the documents laid end
+        to end, so some n-grams straddle a boundary. Removing a document
+        deletes the two seams around it and creates one where its neighbours
+        now meet, and those are put right here -- which is what makes this
+        equal to a rebuild rather than merely close to it.
+
+        Restoration happens even if the caller raises: a half-subtracted model
+        is wrong for every later document, not just the one that failed.
+        """
+        removed, added, span = self._document_delta(index)
+        self._shift(removed, added, -span)
+        try:
+            yield self
+        finally:
+            self._shift(added, removed, span)
+
+    def _document_delta(self, index):
+        """N-grams to remove and to add when document ``index`` steps out.
+
+        Returns (removed, added, token count), each of the first two indexed by
+        n like ``counts``.
+        """
+        start, end = self.bounds[index]
+        tokens = self.tokens
+        removed = [collections.Counter() for _ in range(self.order + 1)]
+        added = [collections.Counter() for _ in range(self.order + 1)]
+        for n in range(1, self.order + 1):
+            # Every n-gram covering at least one of the document's tokens goes,
+            # including the ones reaching into a neighbour.
+            first = max(0, start - n + 1)
+            last = min(len(tokens) - n + 1, end)
+            for i in range(first, last):
+                removed[n][tuple(tokens[i:i + n])] += 1
+            # Closing the gap butts the neighbours together, and the n-grams
+            # spanning that new join did not exist before. Only n-1 tokens from
+            # each side can take part: an n-gram reaching further would not
+            # cross the join.
+            #
+            # That bound is what the test suite cannot see past. Widening the
+            # slice, or admitting the n-gram that begins exactly at the join,
+            # leaves the result unchanged in every reachable shape, because the
+            # crossing condition rejects what the wider slice adds. Both are
+            # equivalent mutations, recorded here rather than pinned by a test
+            # that could not tell them apart.
+            left = tokens[max(0, start - n + 1):start]
+            right = tokens[end:end + n - 1]
+            joined = left + right
+            for i in range(len(joined) - n + 1):
+                if i < len(left) < i + n:
+                    added[n][tuple(joined[i:i + n])] += 1
+        return removed, added, end - start
+
+    def _shift(self, minus, plus, token_delta):
+        """Apply one count adjustment. ``_shift(b, a, -n)`` undoes ``(a, b, n)``.
+
+        A count that reaches zero is deleted rather than left behind, because
+        ``vocab`` is the size of the unigram table and a zero entry there would
+        inflate it -- and with it the floor every unseen word is scored
+        against.
+        """
+        for n in range(1, self.order + 1):
+            counter = self.counts[n]
+            for gram, count in minus[n].items():
+                remaining = counter[gram] - count
+                if remaining < 0:
+                    raise ValueError(
+                        f"removing {gram!r} would leave a negative count; "
+                        "the model and its document bounds disagree"
+                    )
+                if remaining:
+                    counter[gram] = remaining
+                else:
+                    del counter[gram]
+            counter.update(plus[n])
+        self.total += token_delta
         self.vocab = len(self.counts[1])
 
     # -- scoring --

@@ -118,6 +118,55 @@ class TestCalibration:
         calibration = calibrate(tokenized(REFERENCE), 2, "loo")
         assert calibration["trained_on"] == 2
 
+    def test_leave_one_out_by_subtraction_equals_leave_one_out_by_rebuilding(self):
+        """The speed of calibration rests on this: subtracting a document's
+        counts from the whole corpus is the same model as never adding them,
+        seam n-grams included. Rebuilt here independently of the engine, so a
+        change to the subtraction has something to disagree with."""
+        documents = tokenized(REFERENCE)
+        expected = []
+        for held, tokens in enumerate(documents):
+            model = markov_core.NgramModel(
+                [tok for i, doc in enumerate(documents) if i != held for tok in doc],
+                order=2,
+            )
+            expected.append(markov_cli.measure(model, tokens))
+
+        calibration = calibrate(documents, 2, "loo")
+        for key, field in (
+            ("bits_per_token", "surprisal"),
+            ("novel_ngram_rate", "novel_ngram_rate"),
+        ):
+            values = [score[key] for score in expected]
+            assert calibration[field]["mean"] == pytest.approx(
+                statistics.fmean(values)
+            )
+            assert calibration[field]["stdev"] == pytest.approx(
+                statistics.stdev(values)
+            )
+
+    def test_calibration_leaves_the_model_it_borrowed_intact(self):
+        """The same model goes on to score the targets, so calibration must
+        hand it back exactly as it found it."""
+        documents = tokenized(REFERENCE)
+        model = markov_core.NgramModel.from_documents(documents, order=2)
+        before = markov_core.NgramModel.from_documents(documents, order=2)
+
+        calibrate(documents, 2, "loo", model=model)
+
+        assert model.counts == before.counts
+        assert (model.total, model.vocab) == (before.total, before.vocab)
+
+    def test_a_caller_s_model_and_a_built_one_calibrate_alike(self):
+        documents = tokenized(REFERENCE)
+        supplied = calibrate(
+            documents,
+            2,
+            "loo",
+            model=markov_core.NgramModel.from_documents(documents, order=2),
+        )
+        assert supplied == calibrate(documents, 2, "loo")
+
     def test_the_two_baselines_are_different_estimators(self):
         documents = tokenized(ten_documents())
         assert (

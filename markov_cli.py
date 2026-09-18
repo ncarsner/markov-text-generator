@@ -10,6 +10,7 @@ the by-product, not the point.
 """
 
 import argparse
+import contextlib
 import glob
 import json
 import os
@@ -187,14 +188,19 @@ def measure(model, tokens):
     }
 
 
-def calibrate(token_lists, order, baseline):
+def calibrate(token_lists, order, baseline, model=None):
     """Measure what surprisal this reference corpus expects of its own members.
 
     This is what makes deviation calculable rather than merely observed: a
     document's score means nothing until there is a distribution to read it
     against, and the only honest source for that distribution is the reference
     itself. Leave-one-out scores every document against a model built from all
-    the others; holdout builds one model and is cheaper on a large corpus.
+    the others; holdout builds one model and scores only a fifth of them.
+
+    Leave-one-out subtracts each document's counts from one whole-corpus model
+    rather than rebuilding, which is exact rather than approximate: see
+    ``NgramModel.without``. ``model`` is that whole-corpus model, built here if
+    the caller has not built one already.
 
     Spread is the sample standard deviation, since the reference is a sample of
     the language being characterized rather than the whole of it.
@@ -208,12 +214,11 @@ def calibrate(token_lists, order, baseline):
     scores = []
     trained_on = []
     if baseline == "loo":
+        if model is None:
+            model = markov_core.NgramModel.from_documents(token_lists, order=order)
         for held, tokens in enumerate(token_lists):
-            others = [t for i, t in enumerate(token_lists) if i != held]
-            model = markov_core.NgramModel(
-                [token for document in others for token in document], order=order
-            )
-            scores.append(measure(model, tokens))
+            with model.without(held) as others:
+                scores.append(measure(others, tokens))
     else:
         held_out = list(range(0, len(token_lists), HOLDOUT_EVERY))
         trained_on = [t for i, t in enumerate(token_lists) if i not in set(held_out)]
@@ -271,10 +276,11 @@ def analyze_documents(
     reference_tokens = [tokenizer(text) for _, text in reference]
     reference_paths = [path for path, _ in reference]
 
-    calibration = calibrate(reference_tokens, order, baseline)
-    whole = markov_core.NgramModel(
-        [token for document in reference_tokens for token in document], order=order
-    )
+    # One model serves the whole run: calibration borrows it a document at a
+    # time, and a target already in the reference is scored by the same
+    # subtraction rather than by a rebuild of its own.
+    whole = markov_core.NgramModel.from_documents(reference_tokens, order=order)
+    calibration = calibrate(reference_tokens, order, baseline, model=whole)
 
     scored = []
     for path, text in targets:
@@ -286,30 +292,22 @@ def analyze_documents(
             )
 
         held_out = path in reference_paths
-        if held_out:
-            keep = reference_paths.index(path)
-            model = markov_core.NgramModel(
-                [
-                    token
-                    for i, document in enumerate(reference_tokens)
-                    if i != keep
-                    for token in document
-                ],
-                order=order,
-            )
-        else:
-            model = whole
-
-        surprisals = model.surprisals(tokens)
-        result = {
-            "bits_per_token": sum(surprisals) / len(surprisals),
-            "novel_ngram_rate": model.novel_ngram_rate(tokens),
-        }
-        # Spans are scored by the same model as the document, so a held-out
-        # target's passages are not judged against a model that has read them.
-        spans = document_spans(
-            model, text, located, surprisals, window, top_spans
+        borrowed = (
+            whole.without(reference_paths.index(path))
+            if held_out
+            else contextlib.nullcontext(whole)
         )
+        with borrowed as model:
+            surprisals = model.surprisals(tokens)
+            result = {
+                "bits_per_token": sum(surprisals) / len(surprisals),
+                "novel_ngram_rate": model.novel_ngram_rate(tokens),
+            }
+            # Spans are scored by the same model as the document, so a held-out
+            # target's passages are not judged against a model that read them.
+            spans = document_spans(
+                model, text, located, surprisals, window, top_spans
+            )
         scored.append(
             {
                 "path": path,
@@ -858,8 +856,9 @@ def build_parser():
         "--baseline",
         choices=("loo", "holdout"),
         default="loo",
-        help="how to calibrate the expected range: leave-one-out builds a model "
-        "per reference document, holdout builds one (default: %(default)s)",
+        help="how to calibrate the expected range: leave-one-out scores every "
+        "reference document against the others, holdout scores every fifth "
+        "(default: %(default)s)",
     )
     analyze.add_argument(
         "--window",
