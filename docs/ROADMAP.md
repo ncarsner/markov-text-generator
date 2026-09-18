@@ -85,7 +85,7 @@ is lifted intact. Two consequences survive:
 1. **Corpus scale remains the highest-leverage input.** It is now demonstrated,
    not assumed: every further quality gain is cheaper to buy with more text than
    with better code.
-2. **Output inherits the corpus's licence.** Because the model still reproduces
+2. **Output inherits the corpus's license.** Because the model still reproduces
    multi-word spans verbatim, generated text from a copyrighted corpus is a
    derivative of it in the most literal sense. This is why the corpus stays
    untracked and why evaluation is restricted to public-domain sources.

@@ -382,7 +382,7 @@ def span_surprisals(scores, window):
 def rank_spans(means, window, top):
     """Indices of the ``top`` highest-scoring spans, without overlaps.
 
-    Neighbouring windows share all but one token and so score almost alike; a
+    Neighboring windows share all but one token and so score almost alike; a
     raw ranking returns the same passage a dozen times, one token shifted. Take
     the highest, discard everything it overlaps, repeat.
     """

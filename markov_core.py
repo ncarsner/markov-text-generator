@@ -230,7 +230,7 @@ class NgramModel:
 
         The subtlety is the seam. The counts come from the documents laid end
         to end, so some n-grams straddle a boundary. Removing a document
-        deletes the two seams around it and creates one where its neighbours
+        deletes the two seams around it and creates one where its neighbors
         now meet, and those are put right here -- which is what makes this
         equal to a rebuild rather than merely close to it.
 
@@ -256,12 +256,12 @@ class NgramModel:
         added = [collections.Counter() for _ in range(self.order + 1)]
         for n in range(1, self.order + 1):
             # Every n-gram covering at least one of the document's tokens goes,
-            # including the ones reaching into a neighbour.
+            # including the ones reaching into a neighbor.
             first = max(0, start - n + 1)
             last = min(len(tokens) - n + 1, end)
             for i in range(first, last):
                 removed[n][tuple(tokens[i:i + n])] += 1
-            # Closing the gap butts the neighbours together, and the n-grams
+            # Closing the gap butts the neighbors together, and the n-grams
             # spanning that new join did not exist before. Only n-1 tokens from
             # each side can take part: an n-gram reaching further would not
             # cross the join.

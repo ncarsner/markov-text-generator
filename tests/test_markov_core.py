@@ -183,7 +183,7 @@ class TestNgramModelCounts:
 
 
 # Three documents chosen so the joins matter. Laid end to end they produce
-# ("mat", "the") and ("log", "a"); take the middle one out and the neighbours
+# ("mat", "the") and ("log", "a"); take the middle one out and the neighbors
 # meet at ("mat", "a"), which no document contains.
 DOCUMENTS = [
     "the cat sat on the mat".split(),
@@ -242,7 +242,7 @@ class TestWithout:
                     == rebuilt(held, 3).bits_per_token(DOCUMENTS[held]))
 
     def test_the_join_the_removal_creates_is_counted(self, model):
-        """The neighbours now meet, and that n-gram was in no document."""
+        """The neighbors now meet, and that n-gram was in no document."""
         assert ("mat", "a") not in model.counts[2]
         with model.without(1) as subtracted:
             assert subtracted.counts[2][("mat", "a")] == 1
