@@ -234,6 +234,7 @@ surface for review pipelines.
 | Risk | Mitigation |
 |---|---|
 | **Small reference corpus gives unreliable scores.** Demonstrated: at 2,648 words the model was 92% forced and near-useless. | `stats` gates analysis; warn below a token threshold. |
+| **Too few reference documents makes the verdict unreachable.** A member of the reference is standardized against scores it belongs to, bounding it at (n-1)/sqrt(n): 1.15 at 3 documents, 2.47 at 8, against a threshold of 2.5. "Typical" then reports the corpus size, not the text. Independent of the token threshold above — three long books pass that and still cap a member at 1.15. | Report the ceiling with every analysis; warn when it sits below the threshold. |
 | **Misread as judgment rather than measurement.** A statistical outlier is not necessarily a problem. | Non-goals stated in output header, not only in docs. |
 | **Reference corpus encodes its own bias.** "Expected" means "typical of what you supplied." | Report corpus composition alongside every score. |
 | **Tokenization artifacts.** Numbers and rare proper nouns are inherently novel and may crowd span rankings. | Accepted in v1; measure the effect and use it to specify domain profiles. |

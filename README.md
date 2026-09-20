@@ -98,9 +98,11 @@ recognize its exact wording and call it unsurprising. It would be grading its ow
 homework. The same rule applies when you score a document that is part of your
 reference corpus: the tool notices, drops it from the model, and says so.
 
-`--baseline holdout` does the cheap version — hold out every fifth document once,
-build one model instead of 54. On the inaugural corpus that is 0.2 seconds against
-5, at the cost of a coarser estimate from fewer scores.
+`--baseline holdout` does the cheap version — hold out every fifth document once
+and score only those. On the inaugural corpus that is 0.21 seconds against 0.34,
+at the cost of a much coarser estimate: 11 scores instead of 54, which caps a
+reference document at 3.02 z rather than 7.21. Both build one model; leave-one-out
+reaches its 54 by subtracting each document's counts rather than rebuilding.
 
 **How to read it.** That range is a property of that corpus alone. A different
 corpus has a different range, and scores are never comparable across corpora.
@@ -261,6 +263,19 @@ Scores also depend on the corpus you chose. "Expected" only ever means "typical
 of what you supplied," so a biased or unrepresentative reference produces
 confident, meaningless numbers.
 
+**A small reference cannot call anything variant, and will not say so on its
+own.** A document that is part of the reference is measured against an average
+and a spread calculated from the same handful of scores it belongs to, which
+caps how far from them it can possibly land. The cap is `(n-1)/√n` for `n`
+documents: with 5 it is 1.79, with 8 it is 2.47, and the variant threshold is
+2.5. **Below 9 reference documents, a reference document cannot be flagged at
+all** — not unlikely, impossible, and "typical" then reports the size of the
+corpus rather than anything about the text. This is separate from the corpus
+being large enough in words: three long books clear the word count easily and
+still cap a member at 1.15. Every report prints the cap, and a corpus too small
+to reach the threshold says so in a warning. An outside target has no such cap,
+since it is not part of the set it is measured against.
+
 It also says nothing about **who or what wrote a document**. A passage that
 deviates from an author's previous work deviates for some reason, and a different
 author is only one of them — a new subject, a new format, an editor, a co-writer,
@@ -275,7 +290,7 @@ Requires [uv](https://docs.astral.sh/uv/).
 ```sh
 uv sync                                    # create the environment, install `markov`
 uv run python scripts/fetch_corpus.py      # download the sample corpus
-uv run pytest                              # 294 tests
+uv run pytest                              # 314 tests
 ```
 
 Check whether a reference corpus is big enough to score against:
@@ -315,6 +330,7 @@ reference:  data/input/speech_inaugural_*.txt
             54 documents, 126,488 tokens, plain tokenizer, order 3
 expected:   9.01 +/- 0.47 bits/token, 79% +/- 4% novel 3-grams
             measured by scoring each of the 54 reference documents against the other 53
+            a reference document can reach at most 7.21 z; an outside target is not bounded
 
 document:   data/input/speech_we_choose_to_go_to_the_moon.txt  (2,152 tokens)
   surprisal         10.36  bits/token
