@@ -13,6 +13,7 @@ import argparse
 import contextlib
 import glob
 import json
+import math
 import os
 import random
 import re
@@ -253,6 +254,26 @@ def calibrate(token_lists, order, baseline, model=None):
     }
 
 
+def verdict_ceiling(documents):
+    """The largest |z| a member of the reference can reach, given how many.
+
+    A reference document is standardized against a mean and spread computed
+    from the same set of scores it belongs to, which bounds it at
+    (n-1)/sqrt(n). The bound is arithmetic, not statistical: it holds however
+    long the documents are and however far the language varies.
+
+    It matters because it can sit below VARIANT_Z. At 8 documents the most a
+    member can reach is 2.47, so "variant" is not unlikely for a reference
+    document -- it is unreachable, and the "typical" verdict says only that the
+    corpus is too small to say otherwise. Reporting the ceiling is what keeps
+    that from being read as a finding.
+
+    An outside target is not bounded this way: it is standardized against
+    scores it is not part of.
+    """
+    return (documents - 1) / math.sqrt(documents)
+
+
 def deviation(value, expected):
     """Standard deviations between a score and its expected distribution."""
     if expected["stdev"] == 0:
@@ -340,11 +361,22 @@ def analyze_documents(
         )
 
     corpus_tokens = sum(len(document) for document in reference_tokens)
+    ceiling = verdict_ceiling(calibration["documents"])
     warnings = []
     if corpus_tokens < MIN_REFERENCE_TOKENS:
         warnings.append(
             f"reference corpus is {corpus_tokens:,} tokens; below roughly "
             f"{MIN_REFERENCE_TOKENS:,} scores are dominated by sparsity"
+        )
+    # Independent of the token warning above: a corpus can be large in words
+    # and still hold too few documents to say anything. Three long books clear
+    # the token gate and bound a member at 1.15 z.
+    if ceiling <= VARIANT_Z:
+        warnings.append(
+            f"{calibration['documents']} documents bound a reference "
+            f"document's deviation at {ceiling:.2f} z, short of the "
+            f"{VARIANT_Z} needed to be called variant; no member of this "
+            f"reference can be flagged, whatever it says"
         )
 
     return {
@@ -359,6 +391,10 @@ def analyze_documents(
             "method": calibration["method"],
             "documents": calibration["documents"],
             "trained_on": calibration["trained_on"],
+            # The most a reference document could deviate, given how many were
+            # scored. Carried in the output so a z can be read against what was
+            # reachable rather than against 2.5 alone.
+            "ceiling": round(ceiling, 6),
             "surprisal_mean": round(calibration["surprisal"]["mean"], 6),
             "surprisal_stdev": round(calibration["surprisal"]["stdev"], 6),
             "novel_ngram_mean": round(calibration["novel_ngram_rate"]["mean"], 6),
@@ -584,6 +620,8 @@ def format_analysis(analysis, patterns, explain=False):
         f"{calibration['novel_ngram_mean']:.0%} +/- "
         f"{calibration['novel_ngram_stdev']:.0%} novel {order}-grams",
         f"            {_how_expected_was_measured(calibration)}",
+        f"            a reference document can reach at most "
+        f"{calibration['ceiling']:.2f} z; an outside target is not bounded",
     ]
 
     for document in analysis["documents"]:
@@ -617,7 +655,11 @@ def format_analysis(analysis, patterns, explain=False):
         if document["held_out"]:
             lines.append(
                 "  this document is part of the reference; scored against a "
-                "model built without it"
+                "model built without it,"
+            )
+            lines.append(
+                f"  and bounded at {calibration['ceiling']:.2f} z by the "
+                f"{calibration['documents']} documents it is measured among"
             )
         lines.extend(_span_lines(document["spans"], explain))
 

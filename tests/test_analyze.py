@@ -186,6 +186,120 @@ class TestDeviation:
         assert "spread" in str(excinfo.value)
 
 
+def varied_documents(count, repeats=1):
+    """Documents that overlap enough to be scorable and differ enough to spread.
+
+    Identical documents score identically, which leaves no spread and no z at
+    all. Each of these carries a different amount of the shared phrase, so
+    leave-one-out produces a real distribution. ``repeats`` scales them up when
+    a test needs a corpus past MIN_REFERENCE_TOKENS.
+    """
+    shared = "the cat sat on the mat and the dog ate the rat"
+    return [
+        (f"d{i}.txt", " ".join([shared] * ((i + 1) * repeats)
+                               + [f"unique{i}word{j}" for j in range(5)]) + "\n")
+        for i in range(count)
+    ]
+
+
+class TestVerdictCeiling:
+    """What a reference of a given size can say about its own members."""
+
+    @pytest.mark.parametrize(
+        "documents, ceiling",
+        [(2, 0.707107), (3, 1.154701), (5, 1.788854), (8, 2.474874),
+         (9, 2.666667), (54, 7.212386)],
+    )
+    def test_the_bound_is_n_minus_one_over_root_n(self, documents, ceiling):
+        assert markov_cli.verdict_ceiling(documents) == pytest.approx(ceiling)
+
+    def test_nine_documents_is_where_variant_becomes_reachable(self):
+        """Below this, "typical" reports the size of the corpus, not the text."""
+        assert markov_cli.verdict_ceiling(8) < markov_cli.VARIANT_Z
+        assert markov_cli.verdict_ceiling(9) > markov_cli.VARIANT_Z
+
+    @pytest.mark.parametrize("count", [3, 5, 9, 20])
+    def test_no_reference_document_ever_exceeds_it(self, count):
+        """The bound is arithmetic, so it holds for any corpus. Checked against
+        real leave-one-out scores rather than asserted from the formula."""
+        calibration = calibrate(tokenized(varied_documents(count)), 2, "loo")
+        ceiling = markov_cli.verdict_ceiling(calibration["documents"])
+        for score in calibration["scores"]:
+            assert abs(deviation(score, calibration["surprisal"])) <= ceiling + 1e-9
+
+    def test_it_is_reported_with_the_calibration(self):
+        analysis = analyze_documents(REFERENCE, [OUTSIDER], "plain", 2, "loo")
+        assert analysis["calibration"]["ceiling"] == pytest.approx(
+            markov_cli.verdict_ceiling(3)
+        )
+
+    def test_a_corpus_too_small_to_flag_its_members_warns(self):
+        analysis = analyze_documents(REFERENCE, [OUTSIDER], "plain", 2, "loo")
+        warning = next(w for w in analysis["warnings"] if "bound" in w)
+        assert "1.15" in warning and "2.5" in warning
+
+    def test_a_corpus_large_enough_does_not_warn(self):
+        documents = varied_documents(10)
+        analysis = analyze_documents(documents, [OUTSIDER], "plain", 2, "loo")
+        assert markov_cli.verdict_ceiling(len(documents)) > markov_cli.VARIANT_Z
+        assert not any("bound" in w for w in analysis["warnings"])
+
+    def test_the_two_size_warnings_are_independent(self):
+        """A corpus can be long enough in words and still hold too few
+        documents: the word gate does not cover for the document gate."""
+        analysis = analyze_documents(
+            varied_documents(3, repeats=2_900), [OUTSIDER], "plain", 2, "loo"
+        )
+        assert analysis["reference"]["tokens"] > markov_cli.MIN_REFERENCE_TOKENS
+        assert not any("sparsity" in w for w in analysis["warnings"])
+        assert any("bound" in w for w in analysis["warnings"])
+
+    def test_the_bound_follows_the_scores_not_the_corpus(self):
+        """Holdout scores every fifth document, so ten documents produce two
+        scores and a ceiling of 0.71 -- far tighter than the corpus size
+        suggests, and tight enough that variant is out of reach."""
+        documents = varied_documents(10)
+        analysis = analyze_documents(
+            documents, [OUTSIDER], "plain", 2, "holdout"
+        )
+        assert analysis["reference"]["documents"] == 10
+        assert analysis["calibration"]["documents"] == 2
+        assert analysis["calibration"]["ceiling"] == pytest.approx(
+            markov_cli.verdict_ceiling(2)
+        )
+        assert any("bound" in w for w in analysis["warnings"])
+
+    def test_a_ceiling_exactly_on_the_threshold_still_warns(self, monkeypatch):
+        """Variant needs |z| strictly above the threshold, so a ceiling sitting
+        exactly on it is still unreachable. Pinned against the boundary rather
+        than against 2.5, which no integer document count lands on."""
+        monkeypatch.setattr(markov_cli, "VARIANT_Z", markov_cli.verdict_ceiling(8))
+        analysis = analyze_documents(
+            varied_documents(8), [OUTSIDER], "plain", 2, "loo"
+        )
+        assert analysis["calibration"]["ceiling"] == pytest.approx(
+            markov_cli.VARIANT_Z
+        )
+        assert any("bound" in w for w in analysis["warnings"])
+
+    def test_the_report_states_the_bound(self):
+        analysis = analyze_documents(REFERENCE, [OUTSIDER], "plain", 2, "loo")
+        report = markov_cli.format_analysis(analysis, ["ref"])
+        assert "can reach at most 1.15 z" in report
+        assert "an outside target is not bounded" in report
+
+    def test_a_held_out_document_is_told_what_bounds_it(self):
+        analysis = analyze_documents(REFERENCE, [REFERENCE[0]], "plain", 2, "loo")
+        report = markov_cli.format_analysis(analysis, ["ref"])
+        assert "bounded at 1.15 z by the 3 documents" in report
+
+    def test_an_outside_target_is_not_told_it_is_bounded(self):
+        """It is not part of the set it is measured against, so it is not."""
+        analysis = analyze_documents(REFERENCE, [OUTSIDER], "plain", 2, "loo")
+        report = markov_cli.format_analysis(analysis, ["ref"])
+        assert "bounded at" not in report
+
+
 class TestScoring:
     def test_an_outside_document_is_scored_against_the_whole_reference(self):
         analysis = analyze_documents(REFERENCE, [OUTSIDER], "plain", 2, "loo")
