@@ -29,10 +29,20 @@ import markov_core
 # transcribe itself.
 MIN_REFERENCE_TOKENS = 100_000
 
-# Beyond this many standard deviations a document is called variant. The README
-# reads |z| < 1 as typical, 1-2 as ordinary variation, and beyond 2.5 as worth a
-# look; this is that last boundary.
+# Beyond this many standard deviations a document is called variant, once the
+# reference is large enough for that to be the right number. The README reads
+# |z| < 1 as typical, 1-2 as ordinary variation, and beyond 2.5 as worth a
+# look; this is that last boundary, and the limit the size-adjusted threshold
+# converges to. See verdict_threshold for why it cannot be applied flat.
 VARIANT_Z = 2.5
+
+# A reference document has to clear its threshold without passing the ceiling
+# that verdict_ceiling describes, so how close those two sit is how much room
+# the test has to work in. Measured by simulation: where the threshold reaches
+# 90% of the ceiling -- 6 documents -- a member sitting four standard
+# deviations from its peers is caught 42% of the time. At 8 documents (82%)
+# that is 61%, and at 54 (34%) it is 91%. Below this the report says so.
+CROWDED_CEILING = 0.9
 
 # --baseline holdout scores every fifth document against the rest. Spread
 # through the corpus rather than taken as a contiguous block: a reference
@@ -262,16 +272,138 @@ def verdict_ceiling(documents):
     (n-1)/sqrt(n). The bound is arithmetic, not statistical: it holds however
     long the documents are and however far the language varies.
 
-    It matters because it can sit below VARIANT_Z. At 8 documents the most a
-    member can reach is 2.47, so "variant" is not unlikely for a reference
-    document -- it is unreachable, and the "typical" verdict says only that the
-    corpus is too small to say otherwise. Reporting the ceiling is what keeps
-    that from being read as a finding.
+    It matters because it sits below VARIANT_Z until 9 documents: a flat 2.5
+    was unreachable there, and "typical" said only that the corpus was too
+    small to say otherwise. ``verdict_threshold`` derives the threshold from
+    this bound instead, so what a member must clear is always inside what it
+    can reach. How close the two sit is how much room the test has, which is
+    what the ceiling is still reported for.
 
     An outside target is not bounded this way: it is standardized against
     scores it is not part of.
     """
     return (documents - 1) / math.sqrt(documents)
+
+
+def _beta_continued_fraction(a, b, x):
+    """Lentz's method for the continued fraction of the incomplete beta."""
+    tiny = 1e-30
+    qab, qap, qam = a + b, a + 1.0, a - 1.0
+    c = 1.0
+    d = 1.0 - qab * x / qap
+    if abs(d) < tiny:
+        d = tiny
+    d = 1.0 / d
+    fraction = d
+    for m in range(1, 300):
+        m2 = 2 * m
+        for numerator in (
+            m * (b - m) * x / ((qam + m2) * (a + m2)),
+            -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2)),
+        ):
+            d = 1.0 + numerator * d
+            if abs(d) < tiny:
+                d = tiny
+            c = 1.0 + numerator / c
+            if abs(c) < tiny:
+                c = tiny
+            d = 1.0 / d
+            step = d * c
+            fraction *= step
+        if abs(step - 1.0) < 1e-15:
+            break
+    return fraction
+
+
+def _regularized_beta(a, b, x):
+    """I_x(a, b), the regularized incomplete beta function.
+
+    Present because Student's t is what a spread estimated from a sample calls
+    for, and the standard library stops at the normal distribution. Only the t
+    distribution function needs it, and only twice per run.
+    """
+    if x <= 0:
+        return 0.0
+    if x >= 1:
+        return 1.0
+    front = math.exp(
+        math.lgamma(a + b)
+        - math.lgamma(a)
+        - math.lgamma(b)
+        + a * math.log(x)
+        + b * math.log1p(-x)
+    )
+    # The fraction converges quickly on one side of this point and slowly on
+    # the other; the symmetry I_x(a,b) = 1 - I_(1-x)(b,a) takes the fast side.
+    if x < (a + 1.0) / (a + b + 2.0):
+        return front * _beta_continued_fraction(a, b, x) / a
+    return 1.0 - front * _beta_continued_fraction(b, a, 1.0 - x) / b
+
+
+def _t_critical(alpha, df):
+    """The t value a sample of df + 1 exceeds in absolute terms alpha of the time."""
+    lo, hi = 0.0, 1e4
+    for _ in range(200):
+        mid = (lo + hi) / 2.0
+        # P(|T| > mid), rising as mid falls, so the bisection walks up.
+        if _regularized_beta(df / 2.0, 0.5, df / (df + mid * mid)) > alpha:
+            lo = mid
+        else:
+            hi = mid
+    return (lo + hi) / 2.0
+
+
+def variant_alpha():
+    """The false-flag rate VARIANT_Z implies, if the expected range were known.
+
+    1.24%, or about one document in 80. The size-adjusted threshold holds this
+    rate fixed at every reference size, which is the whole of what it does.
+    Derived here rather than stored beside VARIANT_Z so that the two cannot
+    drift apart: VARIANT_Z stays the one number that sets how readily the tool
+    calls something variant.
+    """
+    return 2 * (1 - statistics.NormalDist().cdf(VARIANT_Z))
+
+
+def verdict_threshold(documents, held_out):
+    """How far a document must deviate to be called variant, given how many.
+
+    A flat 2.5 assumes the expected range is known. It is estimated, from as
+    few as a handful of scores, and the error in that estimate runs the wrong
+    way in both directions at once:
+
+    A document inside the reference is squeezed by ``verdict_ceiling``. At 5
+    documents it cannot pass 1.79, so 2.5 called nothing variant, ever. The
+    threshold here is the matching quantile of the studentized residual, which
+    is bounded by the ceiling in the same way and so always sits below it: 1.70
+    at 5 documents, of a possible 1.79.
+
+    A target from outside is squeezed the other way. Its z is divided by a
+    spread estimated from few enough documents to be badly wrong, so 2.5 fired
+    on noise -- measured on 5-document subsets, the same speech was called
+    variant 18 times in 60. The threshold here is the prediction-interval form,
+    t(n-1) * sqrt(1 + 1/n): 4.74 at 5 documents.
+
+    Both hold the false-flag rate at variant_alpha() whatever the size, both
+    converge to VARIANT_Z as the reference grows, so a large corpus reads as it
+    always did. Verified by simulation against the nominal rate; see the tests.
+    """
+    if held_out:
+        ceiling = verdict_ceiling(documents)
+        if documents < 3:
+            # Two scores sit at +/- 0.707 by construction, whatever they are.
+            # Nothing to estimate a spread from, so nothing can be called
+            # variant: the ceiling is unreachable, the verdict strict.
+            #
+            # Removing this guard is an equivalent mutation, but only by
+            # accident: at zero degrees of freedom the bisection bottoms out at
+            # t = 3e-57 rather than 0, so t^2/(0 + t^2) is exactly 1 and the
+            # line below returns the same ceiling. Widen the search range and
+            # that becomes 0/0. The guard says what is meant instead.
+            return ceiling
+        t = _t_critical(variant_alpha(), documents - 2)
+        return ceiling * math.sqrt(t * t / (documents - 2 + t * t))
+    return _t_critical(variant_alpha(), documents - 1) * math.sqrt(1 + 1 / documents)
 
 
 def deviation(value, expected):
@@ -313,6 +445,7 @@ def analyze_documents(
             )
 
         held_out = path in reference_paths
+        threshold = verdict_threshold(calibration["documents"], held_out)
         borrowed = (
             whole.without(reference_paths.index(path))
             if held_out
@@ -349,12 +482,16 @@ def analyze_documents(
                     score < result["bits_per_token"] for score in calibration["scores"]
                 ),
                 "spans": spans,
+                # What this document had to pass, not the flat VARIANT_Z: a
+                # reference member and an outside target are held to different
+                # numbers, and neither is the same at 5 documents as at 54.
+                "threshold": round(threshold, 6),
                 "verdict": (
                     "variant"
                     if abs(
                         deviation(result["bits_per_token"], calibration["surprisal"])
                     )
-                    > VARIANT_Z
+                    > threshold
                     else "typical"
                 ),
             }
@@ -370,13 +507,16 @@ def analyze_documents(
         )
     # Independent of the token warning above: a corpus can be large in words
     # and still hold too few documents to say anything. Three long books clear
-    # the token gate and bound a member at 1.15 z.
-    if ceiling <= VARIANT_Z:
+    # the token gate and leave a member needing 1.15 z of a possible 1.15.
+    documents = calibration["documents"]
+    member_threshold = verdict_threshold(documents, held_out=True)
+    if member_threshold >= CROWDED_CEILING * ceiling:
         warnings.append(
-            f"{calibration['documents']} documents bound a reference "
-            f"document's deviation at {ceiling:.2f} z, short of the "
-            f"{VARIANT_Z} needed to be called variant; no member of this "
-            f"reference can be flagged, whatever it says"
+            f"{documents} documents leave a reference document needing "
+            f"{member_threshold:.2f} z of a possible {ceiling:.2f}, and an "
+            f"outside target {verdict_threshold(documents, False):.2f} z; "
+            f"either way the test misses more than half of what sits four "
+            f"standard deviations from this reference"
         )
 
     return {
@@ -609,6 +749,8 @@ def format_analysis(analysis, patterns, explain=False):
     reference = analysis["reference"]
     calibration = analysis["calibration"]
     order = analysis["order"]
+    member_threshold = verdict_threshold(calibration["documents"], True)
+    outside_threshold = verdict_threshold(calibration["documents"], False)
 
     lines = [
         f"reference:  {' '.join(patterns)}",
@@ -620,8 +762,10 @@ def format_analysis(analysis, patterns, explain=False):
         f"{calibration['novel_ngram_mean']:.0%} +/- "
         f"{calibration['novel_ngram_stdev']:.0%} novel {order}-grams",
         f"            {_how_expected_was_measured(calibration)}",
-        f"            a reference document can reach at most "
-        f"{calibration['ceiling']:.2f} z; an outside target is not bounded",
+        f"            variant past {member_threshold:.2f} z for a reference "
+        f"document, which can reach at most {calibration['ceiling']:.2f};",
+        f"            past {outside_threshold:.2f} z for a target from "
+        f"outside, which is not bounded",
     ]
 
     for document in analysis["documents"]:
@@ -658,7 +802,8 @@ def format_analysis(analysis, patterns, explain=False):
                 "model built without it,"
             )
             lines.append(
-                f"  and bounded at {calibration['ceiling']:.2f} z by the "
+                f"  called variant past {document['threshold']:.2f} z and bounded at "
+                f"{calibration['ceiling']:.2f} by the "
                 f"{calibration['documents']} documents it is measured among"
             )
         lines.extend(_span_lines(document["spans"], explain))

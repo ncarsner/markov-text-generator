@@ -179,6 +179,24 @@ Small changes that everything else depends on.
   rebuild. On the 54 inaugurals: **5.3s to 0.4s, and 175 MB to 75 MB peak**,
   with output byte-identical.
 
+- ~~**Size-adjusted verdict threshold**~~ — **done**. `VARIANT_Z = 2.5` was
+  applied flat, which assumes the expected range is known rather than estimated
+  from as few as a handful of scores. The error runs both ways at once: a
+  document inside the reference is bounded at (n-1)/sqrt(n), so 2.5 was
+  unreachable below 9 documents, while an outside target is divided by a spread
+  those same few scores get badly wrong — on 5-document subsets of the
+  inaugurals, one unchanged speech ranged 0.7 to 7.9 z and 2.5 flagged it 21
+  times in 60. `verdict_threshold` derives both from the reference size,
+  holding the false-flag rate at the 1.24% that 2.5 implies: the studentized
+  residual quantile for a member, bounded by the same ceiling, and the
+  prediction-interval form t(n-1)·sqrt(1+1/n) for an outside target. Needed
+  Student's t, which the standard library does not carry, so the regularized
+  incomplete beta is computed by continued fraction and inverted by bisection —
+  checked against a printed t table and, for the thresholds themselves, against
+  simulated false-flag rates. On the 54 inaugurals **no verdict changes**
+  (2.44 and 2.61 against 2.50); on 5-document subsets the arbitrary flagging
+  drops from 21/60 to 5/60, and a member becomes flaggable at all.
+
 - **Model persistence** — build once, generate many. Use `json` with encoded
   tuple keys, **not `pickle`**: unpickling executes arbitrary code, and a saved
   model is exactly the sort of file people pass around. Now the larger remaining
