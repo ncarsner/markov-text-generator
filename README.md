@@ -101,8 +101,10 @@ reference corpus: the tool notices, drops it from the model, and says so.
 `--baseline holdout` does the cheap version — hold out every fifth document once
 and score only those. On the inaugural corpus that is 0.21 seconds against 0.34,
 at the cost of a much coarser estimate: 11 scores instead of 54, which caps a
-reference document at 3.02 z rather than 7.21. Both build one model; leave-one-out
-reaches its 54 by subtracting each document's counts rather than rebuilding.
+reference document at 3.02 z rather than 7.21 and moves the variant threshold
+with it — 2.17 for a reference document and 3.18 for an outside target, against
+2.44 and 2.61. Both build one model; leave-one-out reaches its 54 by subtracting
+each document's counts rather than rebuilding.
 
 **How to read it.** That range is a property of that corpus alone. A different
 corpus has a different range, and scores are never comparable across corpora.
@@ -122,7 +124,13 @@ standard deviations.
 |---|---|
 | between −1 and +1 | Typical. Unremarkable for this corpus. |
 | ±1 to ±2 | Noticeably different, but within ordinary variation. |
-| beyond ±2.5 | Variant. Worth a look. |
+| beyond the threshold | Variant. Worth a look. |
+
+**The threshold is not a fixed 2.5.** It is 2.5 for a reference large enough to
+pin down its own expected range, and every report states the two numbers it
+actually used — one for a document inside the reference, one for a target from
+outside. They converge on 2.5 as the corpus grows. See
+[what these numbers do **not** mean](#what-these-numbers-do-not-mean).
 
 Negative is not "good" — it means *more formulaic than typical*, which can be its
 own signal (heavy boilerplate, copied language).
@@ -263,18 +271,25 @@ Scores also depend on the corpus you chose. "Expected" only ever means "typical
 of what you supplied," so a biased or unrepresentative reference produces
 confident, meaningless numbers.
 
-**A small reference cannot call anything variant, and will not say so on its
-own.** A document that is part of the reference is measured against an average
-and a spread calculated from the same handful of scores it belongs to, which
-caps how far from them it can possibly land. The cap is `(n-1)/√n` for `n`
-documents: with 5 it is 1.79, with 8 it is 2.47, and the variant threshold is
-2.5. **Below 9 reference documents, a reference document cannot be flagged at
-all** — not unlikely, impossible, and "typical" then reports the size of the
-corpus rather than anything about the text. This is separate from the corpus
-being large enough in words: three long books clear the word count easily and
-still cap a member at 1.15. Every report prints the cap, and a corpus too small
-to reach the threshold says so in a warning. An outside target has no such cap,
-since it is not part of the set it is measured against.
+**A small reference has little to say, and the threshold is what keeps it from
+saying it anyway.** A document that is part of the reference is measured against
+an average and a spread calculated from the same handful of scores it belongs
+to, which caps how far from them it can possibly land: `(n-1)/√n` for `n`
+documents, so 1.79 with 5 and 2.47 with 8. A flat 2.5 was therefore unreachable
+below 9 documents — not unlikely, impossible. An outside target has the opposite
+problem, since the spread it is divided by is itself estimated from those few
+scores and can be badly wrong: measured on 5-document subsets of the inaugurals,
+the same unchanged speech came out anywhere from 0.7 to 7.9 z and a flat 2.5
+called it variant 21 times in 60.
+
+The threshold is derived from the reference size for that reason, and always
+sits inside what a document can reach. What it cannot fix is how little a small
+corpus knows: with 6 documents a member sitting four standard deviations from
+its peers is caught 42% of the time, against 91% with 54. The report warns when
+the threshold has crowded up against the cap that way, and prints both numbers
+either way. This is separate from the corpus being large enough in words —
+three long books clear the word count easily and still leave a member needing
+1.15 of a possible 1.15.
 
 It also says nothing about **who or what wrote a document**. A passage that
 deviates from an author's previous work deviates for some reason, and a different
@@ -290,7 +305,7 @@ Requires [uv](https://docs.astral.sh/uv/).
 ```sh
 uv sync                                    # create the environment, install `markov`
 uv run python scripts/fetch_corpus.py      # download the sample corpus
-uv run pytest                              # 314 tests
+uv run pytest                              # 346 tests
 ```
 
 Check whether a reference corpus is big enough to score against:
@@ -330,7 +345,8 @@ reference:  data/input/speech_inaugural_*.txt
             54 documents, 126,488 tokens, plain tokenizer, order 3
 expected:   9.01 +/- 0.47 bits/token, 79% +/- 4% novel 3-grams
             measured by scoring each of the 54 reference documents against the other 53
-            a reference document can reach at most 7.21 z; an outside target is not bounded
+            variant past 2.44 z for a reference document, which can reach at most 7.21;
+            past 2.61 z for a target from outside, which is not bounded
 
 document:   data/input/speech_we_choose_to_go_to_the_moon.txt  (2,152 tokens)
   surprisal         10.36  bits/token
@@ -466,6 +482,11 @@ if you add behavior, add a test and confirm it fails when the behavior is broken
   expressed in ordinary wording is invisible to it.
 - Needs a reference corpus of roughly 10⁵ words or more. Below that, scores are
   dominated by sparsity.
+- Needs enough reference *documents* as well as enough words. The variant
+  threshold adjusts for how few there are, but it cannot manufacture power: with
+  6 documents a text sitting four standard deviations from its peers is caught
+  42% of the time, against 91% with 54. The report says so when the margin is
+  that thin.
 - Not a diff tool, not a compliance system, and not a substitute for review.
 
 ## Credit

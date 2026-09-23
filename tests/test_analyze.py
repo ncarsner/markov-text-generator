@@ -3,6 +3,7 @@
 import glob
 import json
 import os
+import random
 import statistics
 
 import pytest
@@ -213,10 +214,15 @@ class TestVerdictCeiling:
     def test_the_bound_is_n_minus_one_over_root_n(self, documents, ceiling):
         assert markov_cli.verdict_ceiling(documents) == pytest.approx(ceiling)
 
-    def test_nine_documents_is_where_variant_becomes_reachable(self):
-        """Below this, "typical" reports the size of the corpus, not the text."""
+    def test_a_flat_threshold_was_unreachable_below_nine_documents(self):
+        """Why the threshold is derived from this bound rather than fixed at
+        2.5: below 9 documents the bound sits under 2.5, so "typical" reported
+        the size of the corpus and not the text."""
         assert markov_cli.verdict_ceiling(8) < markov_cli.VARIANT_Z
         assert markov_cli.verdict_ceiling(9) > markov_cli.VARIANT_Z
+        assert markov_cli.verdict_threshold(8, held_out=True) < (
+            markov_cli.verdict_ceiling(8)
+        )
 
     @pytest.mark.parametrize("count", [3, 5, 9, 20])
     def test_no_reference_document_ever_exceeds_it(self, count):
@@ -233,16 +239,20 @@ class TestVerdictCeiling:
             markov_cli.verdict_ceiling(3)
         )
 
-    def test_a_corpus_too_small_to_flag_its_members_warns(self):
+    def test_a_corpus_with_no_room_to_work_in_warns(self):
+        """Three documents leave the threshold on top of the ceiling: variant
+        is reachable in principle and out of reach in practice."""
         analysis = analyze_documents(REFERENCE, [OUTSIDER], "plain", 2, "loo")
-        warning = next(w for w in analysis["warnings"] if "bound" in w)
-        assert "1.15" in warning and "2.5" in warning
+        warning = next(w for w in analysis["warnings"] if "of a possible" in w)
+        assert "1.15 z of a possible 1.15" in warning
 
     def test_a_corpus_large_enough_does_not_warn(self):
         documents = varied_documents(10)
         analysis = analyze_documents(documents, [OUTSIDER], "plain", 2, "loo")
-        assert markov_cli.verdict_ceiling(len(documents)) > markov_cli.VARIANT_Z
-        assert not any("bound" in w for w in analysis["warnings"])
+        assert markov_cli.verdict_threshold(10, held_out=True) < (
+            markov_cli.CROWDED_CEILING * markov_cli.verdict_ceiling(10)
+        )
+        assert not any("of a possible" in w for w in analysis["warnings"])
 
     def test_the_two_size_warnings_are_independent(self):
         """A corpus can be long enough in words and still hold too few
@@ -252,7 +262,7 @@ class TestVerdictCeiling:
         )
         assert analysis["reference"]["tokens"] > markov_cli.MIN_REFERENCE_TOKENS
         assert not any("sparsity" in w for w in analysis["warnings"])
-        assert any("bound" in w for w in analysis["warnings"])
+        assert any("of a possible" in w for w in analysis["warnings"])
 
     def test_the_bound_follows_the_scores_not_the_corpus(self):
         """Holdout scores every fifth document, so ten documents produce two
@@ -267,37 +277,182 @@ class TestVerdictCeiling:
         assert analysis["calibration"]["ceiling"] == pytest.approx(
             markov_cli.verdict_ceiling(2)
         )
-        assert any("bound" in w for w in analysis["warnings"])
+        assert any("of a possible" in w for w in analysis["warnings"])
 
-    def test_a_ceiling_exactly_on_the_threshold_still_warns(self, monkeypatch):
-        """Variant needs |z| strictly above the threshold, so a ceiling sitting
-        exactly on it is still unreachable. Pinned against the boundary rather
-        than against 2.5, which no integer document count lands on."""
-        monkeypatch.setattr(markov_cli, "VARIANT_Z", markov_cli.verdict_ceiling(8))
+    def test_the_warning_boundary_is_where_the_threshold_crowds_the_ceiling(self):
+        """Six documents leave the threshold at 91% of the ceiling and seven at
+        86%, so the warning turns off between them."""
+        assert markov_cli.verdict_threshold(6, held_out=True) >= (
+            markov_cli.CROWDED_CEILING * markov_cli.verdict_ceiling(6)
+        )
+        assert markov_cli.verdict_threshold(7, held_out=True) < (
+            markov_cli.CROWDED_CEILING * markov_cli.verdict_ceiling(7)
+        )
+
+    def test_a_threshold_exactly_at_the_limit_still_warns(self, monkeypatch):
+        """The limit is inclusive. Pinned by moving it onto a ratio a real
+        corpus produces, since no document count lands exactly on 90%."""
+        monkeypatch.setattr(
+            markov_cli,
+            "CROWDED_CEILING",
+            markov_cli.verdict_threshold(7, held_out=True)
+            / markov_cli.verdict_ceiling(7),
+        )
         analysis = analyze_documents(
-            varied_documents(8), [OUTSIDER], "plain", 2, "loo"
+            varied_documents(7), [OUTSIDER], "plain", 2, "loo"
         )
-        assert analysis["calibration"]["ceiling"] == pytest.approx(
-            markov_cli.VARIANT_Z
-        )
-        assert any("bound" in w for w in analysis["warnings"])
+        assert any("of a possible" in w for w in analysis["warnings"])
 
     def test_the_report_states_the_bound(self):
         analysis = analyze_documents(REFERENCE, [OUTSIDER], "plain", 2, "loo")
         report = markov_cli.format_analysis(analysis, ["ref"])
-        assert "can reach at most 1.15 z" in report
-        assert "an outside target is not bounded" in report
+        assert "which can reach at most 1.15" in report
+        assert "which is not bounded" in report
 
     def test_a_held_out_document_is_told_what_bounds_it(self):
         analysis = analyze_documents(REFERENCE, [REFERENCE[0]], "plain", 2, "loo")
         report = markov_cli.format_analysis(analysis, ["ref"])
-        assert "bounded at 1.15 z by the 3 documents" in report
+        assert "bounded at 1.15 by the 3 documents" in report
 
     def test_an_outside_target_is_not_told_it_is_bounded(self):
         """It is not part of the set it is measured against, so it is not."""
         analysis = analyze_documents(REFERENCE, [OUTSIDER], "plain", 2, "loo")
         report = markov_cli.format_analysis(analysis, ["ref"])
         assert "bounded at" not in report
+
+
+
+class TestVerdictThreshold:
+    """How far a document must deviate to be called variant, given how many
+    reference documents set the expectation."""
+
+    @pytest.mark.parametrize(
+        "df, published",
+        [(1, 12.706), (5, 2.571), (10, 2.228), (30, 2.042), (1000, 1.962)],
+    )
+    def test_t_values_match_the_published_table(self, df, published):
+        """The standard library stops at the normal distribution, so the t
+        quantile is computed here. Checked against a printed table rather than
+        against the implementation that produced it."""
+        assert markov_cli._t_critical(0.05, df) == pytest.approx(published, abs=0.002)
+
+    @pytest.mark.parametrize("held_out", [True, False])
+    def test_it_converges_to_the_flat_threshold(self, held_out):
+        """A reference large enough to pin down its own range reads as it
+        always did: the size adjustment is the correction for not having one."""
+        assert markov_cli.verdict_threshold(100_000, held_out) == pytest.approx(
+            markov_cli.VARIANT_Z, abs=0.01
+        )
+
+    @pytest.mark.parametrize("documents", [3, 4, 5, 8, 9, 20, 54])
+    def test_a_member_is_held_inside_its_ceiling(self, documents):
+        """The failure the flat threshold had: asking for more than the
+        arithmetic allows. This one cannot, at any size."""
+        assert markov_cli.verdict_threshold(documents, held_out=True) < (
+            markov_cli.verdict_ceiling(documents)
+        )
+
+    def test_two_scores_can_flag_nothing(self):
+        """Two documents sit at +/- 0.707 by construction. There is no spread
+        to have an opinion about, so the threshold is the unreachable bound."""
+        assert markov_cli.verdict_threshold(2, held_out=True) == pytest.approx(
+            markov_cli.verdict_ceiling(2)
+        )
+
+    @pytest.mark.parametrize("documents", [3, 5, 9, 20, 54])
+    def test_the_two_kinds_straddle_the_flat_threshold(self, documents):
+        """A flat 2.5 was too strict for a member and too loose for an outside
+        target, at the same time and for the same reason."""
+        assert markov_cli.verdict_threshold(documents, held_out=True) < (
+            markov_cli.VARIANT_Z
+        )
+        assert markov_cli.verdict_threshold(documents, held_out=False) > (
+            markov_cli.VARIANT_Z
+        )
+
+    def test_it_moves_in_opposite_directions_as_the_reference_grows(self):
+        """A member is squeezed by the ceiling, which lifts as documents are
+        added; an outside target is squeezed by a noisy spread, which settles."""
+        members = [markov_cli.verdict_threshold(n, True) for n in range(3, 60)]
+        outside = [markov_cli.verdict_threshold(n, False) for n in range(3, 60)]
+        assert members == sorted(members)
+        assert outside == sorted(outside, reverse=True)
+
+    @pytest.mark.parametrize("documents", [5, 20])
+    @pytest.mark.parametrize("held_out", [True, False])
+    def test_the_false_flag_rate_holds_at_every_size(self, documents, held_out):
+        """What the threshold is for. Scores drawn from one distribution, so
+        nothing is genuinely variant; the share called variant anyway should be
+        variant_alpha() whatever the reference size, which a flat 2.5 is not:
+        it flags 0% of members at 5 documents and would flag 1.24% only if the
+        expected range were known exactly."""
+        rng = random.Random(20260920)
+        threshold = markov_cli.verdict_threshold(documents, held_out)
+        trials, flagged = 20_000, 0
+        for _ in range(trials):
+            scores = [rng.gauss(0, 1) for _ in range(documents)]
+            mean = statistics.fmean(scores)
+            spread = statistics.stdev(scores, mean)
+            value = scores[0] if held_out else rng.gauss(0, 1)
+            flagged += abs((value - mean) / spread) > threshold
+        # Four standard errors of the sampling noise at this many trials.
+        assert flagged / trials == pytest.approx(
+            markov_cli.variant_alpha(), abs=0.0045
+        )
+
+    def test_it_follows_variant_z(self, monkeypatch):
+        """VARIANT_Z stays the one number that sets how readily the tool calls
+        something variant; the size adjustment only says what it means here."""
+        relaxed = markov_cli.verdict_threshold(20, held_out=True)
+        monkeypatch.setattr(markov_cli, "VARIANT_Z", 3.5)
+        assert markov_cli.verdict_threshold(20, held_out=True) > relaxed
+
+    def test_a_member_and_an_outside_target_are_held_to_different_numbers(self):
+        documents = varied_documents(9)
+        analysis = analyze_documents(
+            documents, [documents[0], OUTSIDER], "plain", 2, "loo"
+        )
+        member, outsider = analysis["documents"]
+        assert member["threshold"] == pytest.approx(
+            markov_cli.verdict_threshold(9, held_out=True)
+        )
+        assert outsider["threshold"] == pytest.approx(
+            markov_cli.verdict_threshold(9, held_out=False)
+        )
+        assert member["threshold"] < outsider["threshold"]
+
+    def test_a_small_reference_can_now_flag_its_own_member(self):
+        """The point of the change. Eight documents bound a member at 2.47, so
+        a flat 2.5 called this document typical however far out it sat; it
+        clears the size-adjusted 2.03 instead."""
+        documents = varied_documents(8)
+        analysis = analyze_documents(documents, [documents[0]], "plain", 2, "loo")
+        document = analysis["documents"][0]
+        assert document["verdict"] == "variant"
+        assert document["threshold"] < abs(document["z"]) < markov_cli.VARIANT_Z
+
+    def test_the_verdict_uses_the_threshold_it_reports(self):
+        documents = varied_documents(9)
+        analysis = analyze_documents(
+            documents, documents + [OUTSIDER], "plain", 2, "loo"
+        )
+        for document in analysis["documents"]:
+            expected = (
+                "variant" if abs(document["z"]) > document["threshold"] else "typical"
+            )
+            assert document["verdict"] == expected
+
+    def test_the_report_states_both_thresholds(self):
+        analysis = analyze_documents(varied_documents(9), [OUTSIDER], "plain", 2, "loo")
+        report = markov_cli.format_analysis(analysis, ["ref"])
+        assert "variant past 2.09 z for a reference document" in report
+        assert "past 3.38 z for a target from outside" in report
+
+    def test_a_held_out_document_is_told_what_it_had_to_clear(self):
+        documents = varied_documents(9)
+        analysis = analyze_documents(documents, [documents[0]], "plain", 2, "loo")
+        report = markov_cli.format_analysis(analysis, ["ref"])
+        assert "called variant past 2.09 z and bounded at 2.67" in report
 
 
 class TestScoring:
@@ -328,9 +483,10 @@ class TestScoring:
         assert document["bits_per_token"] > included
 
     def test_an_unlike_document_is_called_variant(self):
-        analysis = analyze_documents(REFERENCE, [OUTSIDER], "plain", 2, "loo")
-        assert analysis["documents"][0]["verdict"] == "variant"
-        assert analysis["documents"][0]["z"] > markov_cli.VARIANT_Z
+        analysis = analyze_documents(varied_documents(9), [OUTSIDER], "plain", 2, "loo")
+        document = analysis["documents"][0]
+        assert document["verdict"] == "variant"
+        assert document["z"] > document["threshold"]
 
     def test_a_typical_document_is_not_called_variant(self):
         analysis = analyze_documents(REFERENCE, [REFERENCE[0]], "plain", 2, "loo")
@@ -406,7 +562,7 @@ class TestTextReport:
     def test_states_the_score_the_range_and_the_verdict(self, tmp_path, capsys):
         reference = tmp_path / "ref"
         reference.mkdir()
-        for name, text in REFERENCE:
+        for name, text in varied_documents(9):
             (reference / name).write_text(text)
         target = tmp_path / "outsider.txt"
         target.write_text(OUTSIDER[1])
@@ -419,7 +575,7 @@ class TestTextReport:
         assert "bits/token" in out
         assert "+/-" in out
         assert "VARIANT" in out
-        assert "scoring each of the 3 reference documents" in out
+        assert "scoring each of the 9 reference documents" in out
 
     def test_explains_where_the_expected_range_came_from(self, tmp_path, capsys):
         """The report is read by people deciding whether to act on a flag, so
